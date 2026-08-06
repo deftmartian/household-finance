@@ -3,7 +3,7 @@
 Household Finance turns a private chat room into an interface for everyday
 bookkeeping. Send it a receipt, ask where the money went, or tell it how a
 transaction should be categorized. It does the work in the background and
-keeps Actual Budget as the ledger of record.
+keeps [Actual Budget](https://actualbudget.org/) as the ledger of record.
 
 I built it after years of using tools like YNAB. The budgeting software was
 useful, but keeping it current still meant sorting transactions, saving
@@ -42,20 +42,20 @@ context. Voice notes go through the same workflow as typed messages.
 - Archives original documents and records receipt details in Actual notes.
 
 Receipts can arrive before their bank transaction. Household Finance keeps them
-pending and matches them after a later SimpleFIN sync rather than inventing a
-transaction that has not appeared yet.
+pending and matches them after a later [SimpleFIN](https://www.simplefin.org/)
+sync rather than inventing a transaction that has not appeared yet.
 
 ## Current stack
 
 The first deployment uses:
 
-| Role                                   | Integration                                     |
-| -------------------------------------- | ----------------------------------------------- |
-| Conversation and receipt intake        | Nextcloud Talk                                  |
-| Ledger                                 | Actual Budget                                   |
-| Bank imports                           | SimpleFIN through Actual                        |
-| Receipt understanding and conversation | xAI's Grok API                                  |
-| Runtime                                | Node.js, TypeScript, SQLite, and Docker Compose |
+| Role                                   | Integration                                            |
+| -------------------------------------- | ------------------------------------------------------ |
+| Conversation and receipt intake        | Nextcloud Talk                                         |
+| Ledger                                 | [Actual Budget](https://actualbudget.org/)             |
+| Bank imports                           | [SimpleFIN](https://www.simplefin.org/) through Actual |
+| Receipt understanding and conversation | xAI's Grok API                                         |
+| Runtime                                | Node.js, TypeScript, SQLite, and Docker Compose        |
 
 Nextcloud Talk and Grok are the integrations implemented today. The chat and
 model boundaries are separate from the finance workflows, so other messengers
