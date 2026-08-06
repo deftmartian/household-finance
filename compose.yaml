@@ -1,0 +1,369 @@
+name: household-finance
+
+x-arcane:
+  urls:
+    - https://github.com/deftmartian/household-finance
+
+services:
+  finance-bot:
+    image: household-finance-bot:local
+    pull_policy: build
+    build:
+      context: .
+      target: finance-runtime
+    restart: unless-stopped
+    init: true
+    user: '1000:1000'
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    stop_grace_period: 150s
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '4380'
+      DATA_DIR: /data
+      MODEL_NAME: ${MODEL_NAME:-grok-4.5}
+      MODEL_REASONING_EFFORT: ${MODEL_REASONING_EFFORT:-high}
+      XAI_API_KEY_FILE: /run/secrets/xai_api_key
+      INTAKE_MODE: ${INTAKE_MODE:-disabled}
+      NEXTCLOUD_BASE_URL: ${NEXTCLOUD_BASE_URL:-https://cloud.example.com}
+      NEXTCLOUD_SERVICE_USER: ${NEXTCLOUD_SERVICE_USER:-household-finance-bot}
+      NEXTCLOUD_APP_PASSWORD_FILE: /run/secrets/nextcloud_app_password
+      NEXTCLOUD_ARCHIVE_PATH: ${NEXTCLOUD_ARCHIVE_PATH:-Finance/Receipts}
+      TALK_BOT_SECRET_FILE: /run/secrets/talk_bot_secret
+      TALK_ALLOWED_USER_IDS: ${TALK_ALLOWED_USER_IDS:-}
+      TALK_BOT_ACTOR_ID: ${TALK_BOT_ACTOR_ID:-}
+      ACTUAL_READER_URL: ${ACTUAL_READER_URL:-http://actual-reader:4370}
+      ACTUAL_BANK_SYNC_INTERVAL_HOURS: ${ACTUAL_BANK_SYNC_INTERVAL_HOURS:-4}
+      HOUSEHOLD_TIME_ZONE: ${HOUSEHOLD_TIME_ZONE:-UTC}
+      HOUSEHOLD_PROFILE_PATH: ${HOUSEHOLD_PROFILE_PATH:-Finance/Context/household-profile.json}
+      HOUSEHOLD_FINANCE_ROOM_TOKEN: ${HOUSEHOLD_FINANCE_ROOM_TOKEN:-}
+      CATEGORY_TAXONOMY_PATH: ${CATEGORY_TAXONOMY_PATH:-Finance/Context/category-taxonomy.json}
+      TRANSACTION_CATEGORIZATION_LOOKBACK_DAYS: ${TRANSACTION_CATEGORIZATION_LOOKBACK_DAYS:-45}
+      TRANSACTION_CATEGORIZATION_SCAN_INTERVAL_MINUTES: ${TRANSACTION_CATEGORIZATION_SCAN_INTERVAL_MINUTES:-1}
+      TRANSACTION_CATEGORIZATION_MINIMUM_AUTO_APPLY_CONFIDENCE: ${TRANSACTION_CATEGORIZATION_MINIMUM_AUTO_APPLY_CONFIDENCE:-0.8}
+      ACTUAL_AUTO_APPROVAL_ENABLED: ${ACTUAL_AUTO_APPROVAL_ENABLED:-false}
+      ACTUAL_UPDATE_SIGNING_KEY_FILE: /run/secrets/actual_update_signing_key
+      ACTUAL_UPDATE_SIGNING_KEY_ID: ${ACTUAL_UPDATE_SIGNING_KEY_ID:-production-v1}
+    secrets:
+      - xai_api_key
+      - talk_bot_secret
+      - nextcloud_app_password
+      - actual_update_signing_key
+    volumes:
+      - attachment-shadow-data:/data
+    networks:
+      finance-edge:
+        ipv4_address: 192.168.${VLAN_TAG:-100}.11
+      document-preparation:
+      finance-query:
+    depends_on:
+      document-preparer:
+        condition: service_healthy
+      actual-reader:
+        condition: service_healthy
+    dns:
+      - ${DNS_SERVER:-192.168.1.1}
+    expose:
+      - '4380'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4380/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 4
+    labels:
+      com.getarcaneapp.arcane.updater: 'false'
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  document-preparer:
+    image: household-finance-document-preparer:local
+    pull_policy: build
+    build:
+      context: .
+      target: document-preparer-runtime
+    restart: unless-stopped
+    init: true
+    user: '1000:1000'
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1
+    stop_grace_period: 15s
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '4390'
+    networks:
+      document-preparation:
+    expose:
+      - '4390'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4390/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 4
+    labels:
+      com.getarcaneapp.arcane.updater: 'false'
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  actual-reader:
+    image: household-finance-actual-reader:local
+    pull_policy: build
+    build:
+      context: .
+      target: actual-reader-runtime
+    restart: unless-stopped
+    init: true
+    user: '1000:1000'
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '4370'
+      DATA_DIR: /reader-data
+      ACTUAL_SERVER_URL: http://actual-server:5006
+      ACTUAL_SERVER_PASSWORD_FILE: /run/secrets/actual_server_password
+      ACTUAL_READ_CONTRACT_FILE: /run/secrets/actual_read_contract
+    secrets:
+      - source: actual_server_password
+        target: actual_server_password
+      - source: actual_read_contract
+        target: actual_read_contract
+    volumes:
+      - type: volume
+        source: actual-reader-data
+        target: /reader-data
+    networks:
+      finance-query:
+      finance-internal:
+    depends_on:
+      actual-server:
+        condition: service_healthy
+    expose:
+      - '4370'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4370/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+    labels:
+      com.getarcaneapp.arcane.updater: 'false'
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  actual-server:
+    image: actualbudget/actual-server:26.7.0
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    stop_grace_period: 30s
+    environment:
+      ACTUAL_CONFIG_PATH: /run/secrets/actual_oidc_config.json
+    secrets:
+      - source: actual_oidc_config
+        target: actual_oidc_config.json
+    volumes:
+      - type: volume
+        source: actual-data
+        target: /data
+        volume:
+          nocopy: true
+    networks:
+      finance-internal:
+        aliases:
+          - actual-server
+      finance-edge:
+        ipv4_address: 192.168.${VLAN_TAG:-100}.10
+    dns:
+      - ${DNS_SERVER:-192.168.1.1}
+    expose:
+      - '5006'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:5006').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+    labels:
+      com.getarcaneapp.arcane.updater: 'false'
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  actual-writer:
+    image: household-finance-actual-writer:local
+    pull_policy: build
+    build:
+      context: .
+      target: actual-writer-runtime
+    restart: unless-stopped
+    init: true
+    user: '1000:1000'
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1
+    # Must exceed the bounded 120s in-flight update/readback watchdog so
+    # SIGTERM can finish the lease transition and close Actual/SQLite safely.
+    stop_grace_period: 150s
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      ACTUAL_WRITER_STATE_DIR: /writer-data
+      ACTUAL_SERVER_URL: http://actual-server:5006
+      ACTUAL_SERVER_PASSWORD_FILE: /run/secrets/actual_server_password
+      ACTUAL_PRODUCTION_CONTRACT_FILE: /run/secrets/actual_production_contract
+      ACTUAL_UPDATE_SIGNING_KEY_FILE: /run/secrets/actual_update_signing_key
+      ACTUAL_UPDATE_SIGNING_KEY_ID: ${ACTUAL_UPDATE_SIGNING_KEY_ID:-production-v1}
+      ACTUAL_WRITER_POLL_INTERVAL_MS: ${ACTUAL_WRITER_POLL_INTERVAL_MS:-1000}
+      ACTUAL_WRITER_OPERATION_TIMEOUT_MS: ${ACTUAL_WRITER_OPERATION_TIMEOUT_MS:-120000}
+    secrets:
+      - source: actual_server_password
+        target: actual_server_password
+      - source: actual_production_contract
+        target: actual_production_contract
+      - source: actual_update_signing_key
+        target: actual_update_signing_key
+    volumes:
+      - type: volume
+        source: attachment-shadow-data
+        target: /data
+        volume:
+          nocopy: true
+      - type: volume
+        source: actual-writer-data
+        target: /writer-data
+    networks:
+      finance-internal:
+    depends_on:
+      actual-server:
+        condition: service_healthy
+    labels:
+      com.getarcaneapp.arcane.updater: 'false'
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+networks:
+  finance-edge:
+    name: vlan${VLAN_TAG:-100}_household-finance
+    driver: ipvlan
+    driver_opts:
+      parent: ${VLAN_TRUNK_INTERFACE:-eth0}.${VLAN_TAG:-100}
+    ipam:
+      config:
+        - subnet: 192.168.${VLAN_TAG:-100}.0/24
+          gateway: 192.168.${VLAN_TAG:-100}.1
+  finance-internal:
+    driver: bridge
+    internal: true
+  finance-query:
+    driver: bridge
+    internal: true
+  document-preparation:
+    driver: bridge
+    internal: true
+
+volumes:
+  attachment-shadow-data:
+  actual-data:
+  actual-writer-data:
+  actual-reader-data:
+
+secrets:
+  xai_api_key:
+    file: ${XAI_API_KEY_SOURCE:-./secrets/xai_api_key.txt}
+  actual_oidc_config:
+    file: ${ACTUAL_OIDC_CONFIG_SOURCE:-./secrets/actual_oidc_config.json}
+  actual_server_password:
+    file: ${ACTUAL_SERVER_PASSWORD_SOURCE:-./secrets/actual_server_password.txt}
+  actual_production_contract:
+    file: ${ACTUAL_PRODUCTION_CONTRACT_SOURCE:-./secrets/actual_production_contract.json}
+  actual_update_signing_key:
+    file: ${ACTUAL_UPDATE_SIGNING_KEY_SOURCE:-./secrets/actual_update_signing_key.txt}
+  actual_read_contract:
+    file: ${ACTUAL_READ_CONTRACT_SOURCE:-./secrets/actual_read_contract.json}
+  nextcloud_app_password:
+    file: ${NEXTCLOUD_APP_PASSWORD_SOURCE:-./secrets/nextcloud_app_password.txt}
+  talk_bot_secret:
+    file: ${TALK_BOT_SECRET_SOURCE:-./secrets/talk_bot_secret.txt}

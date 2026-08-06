@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "household-finance-account-plan.v1",
+  "budgetName": "My Finances",
+  "accounts": [
+    {
+      "alias": "checking",
+      "name": "Checking (1234)",
+      "role": "spending",
+      "onBudget": true,
+      "bankSyncEnabled": true,
+      "readEnabled": true,
+      "writerEnabled": true,
+      "lastFour": "1234"
+    },
+    {
+      "alias": "credit-card",
+      "name": "Credit Card (5678)",
+      "role": "credit-card",
+      "onBudget": true,
+      "bankSyncEnabled": true,
+      "readEnabled": true,
+      "writerEnabled": true,
+      "lastFour": "5678"
+    },
+    {
+      "alias": "savings",
+      "name": "Savings (9012)",
+      "role": "savings",
+      "onBudget": false,
+      "bankSyncEnabled": true,
+      "readEnabled": true,
+      "writerEnabled": false,
+      "lastFour": "9012"
+    }
+  ]
+}

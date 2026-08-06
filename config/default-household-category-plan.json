@@ -1,0 +1,192 @@
+{
+  "schemaVersion": "household-finance-category-plan.v1",
+  "currency": "CAD",
+  "expenseGroupName": "Expense",
+  "incomeGroupName": "Income",
+  "categories": [
+    {
+      "alias": "groceries",
+      "name": "Groceries",
+      "description": "Food and everyday grocery-store purchases prepared or used at home.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "dining",
+      "name": "Dining",
+      "description": "Restaurants, takeout, cafes, prepared food bought away from home, and beer, wine, or spirits.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "everyday-shopping",
+      "name": "Everyday Shopping",
+      "description": "Routine non-food household and personal purchases, including cleaning and paper goods, toiletries, clothing, footwear, personal care, and ordinary general retail goods that are not projects, gifts, health care, hobbies, or child-specific school and activity costs.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "mortgage",
+      "name": "Mortgage",
+      "description": "Mortgage payments and ordinary mortgage charges for the household residence.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "house-projects-maintenance",
+      "name": "House Projects & Maintenance",
+      "description": "Home repairs, maintenance, tools, materials, renovations, and purchases for a named house project.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "utilities",
+      "name": "Utilities",
+      "description": "Electricity, heating, water, internet, phone, and other household utilities.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "transportation",
+      "name": "Transportation",
+      "description": "Transit, taxis, parking, vehicle service, registration, and transportation costs other than fuel.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "fuel",
+      "name": "Fuel",
+      "description": "Gasoline, diesel, charging, and other vehicle energy purchases.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "home-insurance",
+      "name": "Home Insurance",
+      "description": "Homeowner, tenant, and other insurance premiums covering the household residence.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "car-insurance",
+      "name": "Car Insurance",
+      "description": "Vehicle insurance premiums and policy charges.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "health-care",
+      "name": "Health Care",
+      "description": "Medical, dental, vision, pharmacy, therapy, and other health-care purchases.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "kids-school",
+      "name": "Kids & School",
+      "description": "Childcare, school costs, books, supplies, activities, chore or allowance payments, and child-specific expenses not better classified elsewhere. Child-owned savings deposits are not household savings; custodial deposits of money already owned by a child are not new household spending.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "subscriptions",
+      "name": "Subscriptions",
+      "description": "Recurring digital services, memberships, software, and media subscriptions.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "entertainment-hobbies",
+      "name": "Entertainment & Hobbies",
+      "description": "Recreation, events, games, hobbies, and non-subscription entertainment.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "gifts",
+      "name": "Gifts and Birthdays",
+      "description": "Birthday presents, holiday gifts, celebrations, and charitable gifts.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "trips",
+      "name": "Trips",
+      "description": "Lodging, camping, park fees, admission, rentals, and other costs unique to an away trip. Food remains Groceries or Dining, vehicle energy remains Fuel, and durable gear remains Entertainment & Hobbies.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "fees-interest",
+      "name": "Fees and Interest",
+      "description": "Bank fees, service charges, borrowing interest, and penalties.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "property-tax",
+      "name": "Property Tax",
+      "description": "Municipal property-tax assessments and installments for the household residence.",
+      "kind": "expense",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "income",
+      "name": "Household Income",
+      "description": "Employment income and other ordinary household income.",
+      "kind": "income",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "borrowed-funds",
+      "name": "Borrowed Funds",
+      "description": "Cash brought on budget by borrowing from an off-budget line of credit or other debt; loan proceeds, not earned household income.",
+      "kind": "income",
+      "modelSelectable": false,
+      "writerEnabled": false
+    },
+    {
+      "alias": "cashback",
+      "name": "Cashback",
+      "description": "Credit-card cashback paid into the household cashback-staging account.",
+      "kind": "income",
+      "modelSelectable": true,
+      "writerEnabled": true
+    },
+    {
+      "alias": "savings",
+      "name": "Savings",
+      "description": "Protected savings allocations and savings transfers.",
+      "kind": "savings",
+      "modelSelectable": false,
+      "writerEnabled": false
+    },
+    {
+      "alias": "debt-repayment",
+      "name": "Debt Repayment",
+      "description": "Principal payments that reduce an off-budget household debt balance.",
+      "kind": "debt",
+      "modelSelectable": false,
+      "writerEnabled": false
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "name": "household-finance",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Self-hosted chat assistant for receipts, transaction categorization, and Actual Budget.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.32.0",
+  "pnpm": {
+    "overrides": {
+      "adm-zip": "0.6.0"
+    },
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
+    "build": "pnpm clean && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm verify:compose",
+    "verify:compose": "bash scripts/verify-compose.sh"
+  },
+  "dependencies": {
+    "@actual-app/api": "26.7.0",
+    "better-sqlite3": "12.4.1",
+    "sharp": "0.35.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "eslint": "^10.0.0",
+    "prettier": "^3.8.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.1",
+    "vitest": "^4.1.3"
+  }
+}
