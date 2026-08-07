@@ -7,8 +7,6 @@ on:
   pull_request:
     branches:
       - main
-  schedule:
-    - cron: '17 9 * * *'
 
 permissions:
   contents: read
@@ -45,11 +43,6 @@ jobs:
 
       - name: Verify application
         run: pnpm verify
-
-      - name: Verify Actual compatibility
-        env:
-          CONTAINER_CLI: docker
-        run: bash scripts/verify-actual-compat.sh
 
   publish:
     needs: verify

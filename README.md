@@ -136,18 +136,15 @@ digests to `latest`.
 The recommended rolling private-stack mode uses all four `latest` references
 with `pull_policy: always`, as shown in `.env.example`. Wait for the whole
 [publishing run](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml)
-to pass before a manual deployment. When Arcane auto-update is enabled, all
-five services are eligible to follow `latest` on Arcane's schedule; the four
-application services do not require an atomic, same-revision restart.
+to pass before a manual deployment. When Arcane auto-update is enabled, the
+four application services are eligible to follow `latest` on Arcane's schedule;
+they do not require an atomic, same-revision restart.
 
-Actual's server and embedded API are released together, but they do not need a
-coordinated container restart. The server follows Actual's stable `latest`
-image. The API remains exactly locked in `package.json` for reproducible builds,
-and Dependabot checks it daily. API update pull requests run the complete
-verification workflow before review and merge, including a disposable
-compatibility check against `actual-server:latest`. It creates, uploads,
-downloads, syncs, and updates a synthetic budget, including the writer's batch
-update path. No production budget or credentials are used by that check.
+Actual Server and the embedded `@actual-app/api` dependency are pinned to the
+same release. A weekly Dependabot group checks both references and opens one
+reviewed pull request when Actual publishes a newer version. Actual Server
+remains opted out of Arcane image updates, so its version changes only through
+that Git change.
 
 For a manual deployment:
 

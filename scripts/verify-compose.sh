@@ -60,6 +60,7 @@ require 'source: xai_api_key' 'the xAI key must be a Compose secret'
 require 'ACTUAL_CONFIG_PATH: /run/secrets/actual_oidc_config\.json' 'Actual must read OIDC configuration from the mounted secret'
 require 'ACTUAL_AUTO_APPROVAL_ENABLED: "false"' 'Actual update auto-approval must default off'
 require 'INTAKE_MODE: disabled' 'Talk intake must default disabled'
+require 'com.getarcaneapp.arcane.updater: "false"' 'the pinned Actual server must opt out of Arcane updates'
 require 'pull_policy: always' 'the rolling example must refresh the published application images'
 require 'source: attachment-shadow-data' 'attachment shadow state must use a dedicated named volume'
 require 'source: actual-data' 'Actual state must use a named volume'
@@ -93,13 +94,14 @@ if ! jq -e '
     .services["finance-bot"],
     .services["document-preparer"],
     .services["actual-reader"],
-    .services["actual-writer"],
-    .services["actual-server"]
+    .services["actual-writer"]
   ] | all(
     .pull_policy == "always" and
     ((.labels // {}) | has("com.getarcaneapp.arcane.updater") | not)
   )) and
-  .services["actual-server"].image == "actualbudget/actual-server:latest"
+  .services["actual-server"].image == "actualbudget/actual-server:26.8.1" and
+  .services["actual-server"].pull_policy == "always" and
+  .services["actual-server"].labels["com.getarcaneapp.arcane.updater"] == "false"
 ' "$rendered_json" >/dev/null; then
   printf 'compose verification failed: the rolling image defaults are incorrect\n' >&2
   exit 1
@@ -132,7 +134,7 @@ if ! jq -e '
   .services["document-preparer"].build.target == "document-preparer-runtime" and
   .services["actual-reader"].build.target == "actual-reader-runtime" and
   .services["actual-writer"].build.target == "actual-writer-runtime" and
-  .services["actual-server"].image == "actualbudget/actual-server:latest" and
+  .services["actual-server"].image == "actualbudget/actual-server:26.8.1" and
   .services["actual-server"].pull_policy == "always"
 ' "$local_rendered_json" >/dev/null; then
   printf 'compose verification failed: the local-build overrides are incorrect\n' >&2
@@ -176,7 +178,7 @@ if ! jq -e \
   .services["document-preparer"].build.target == "document-preparer-runtime" and
   .services["actual-reader"].build.target == "actual-reader-runtime" and
   .services["actual-writer"].build.target == "actual-writer-runtime" and
-  .services["actual-server"].image == "actualbudget/actual-server:latest" and
+  .services["actual-server"].image == "actualbudget/actual-server:26.8.1" and
   .services["actual-server"].pull_policy == "always"
 ' "$pinned_rendered_json" >/dev/null; then
   printf 'compose verification failed: the pinned-image overrides are incorrect\n' >&2

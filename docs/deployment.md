@@ -85,16 +85,14 @@ check confirms that every rolling tag converged.
 
 `pull_policy: always` refreshes a rolling tag when Compose creates or recreates
 a service; it does not schedule a deployment by itself. Arcane auto-update is
-the scheduler when enabled globally. All five services deliberately omit
-Arcane's updater opt-out and follow stable `latest` images.
+the scheduler when enabled globally. The four application services deliberately
+omit Arcane's updater opt-out and follow `latest`.
 
 `@actual-app/api` is an embedded application dependency rather than a separate
-container. It stays exactly locked for reproducible images, while Dependabot
-checks it daily and opens a pull request when Actual publishes a new version.
-Those pull requests run the same verification workflow as other changes. CI
-also starts a disposable `actual-server:latest` and verifies that the installed
-API can create, upload, download, sync, and update a synthetic budget through
-the same internal batch handler used by the production writer.
+container. It and `actual-server` stay pinned to the same release. A weekly
+Dependabot multi-ecosystem group opens one public pull request that updates the
+npm lockfile and Compose example together. The separately deployed server stays
+opted out of Arcane updates until its reviewed deployment change is merged.
 
 ### Build this checkout locally
 
@@ -147,7 +145,7 @@ docker compose --env-file .env images
 
 Do not mix commits, use a child-platform or attestation digest in place of the
 workflow-reported top-level digest, or switch the pull policy while any local
-image name remains. `actual-server` follows the upstream stable `latest` image.
+image name remains. `actual-server` uses its separately reviewed version pin.
 
 Publishing creates registry artifacts; it does not deploy them. Keep
 site-specific configuration in a private deployment repository. That repository

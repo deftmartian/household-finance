@@ -18,9 +18,8 @@ const expectedImages = [
 ];
 
 describe('container publishing workflow', () => {
-  it('verifies pull requests and Actual latest compatibility without publishing', () => {
+  it('verifies pull requests without publishing them', () => {
     expect(workflow).toMatch(/pull_request:\n\s+branches:\n\s+- main/);
-    expect(workflow).toContain('run: bash scripts/verify-actual-compat.sh');
     expect(publish).toContain(
       "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
     );
