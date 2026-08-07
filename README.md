@@ -128,20 +128,27 @@ running containers appear in Docker or Arcane only after a Compose deployment
 creates them. The fifth Compose service, `actual-server`, uses the upstream
 `actualbudget/actual-server` image and is not published by this repository.
 
-Each application image is tagged with the full 40-character Git commit. There
-is no `latest` tag. Choose one overall-green
+Each application image keeps a traceable full-commit tag and an immutable
+top-level digest. After all four matrix builds succeed, the workflow verifies
+that the complete commit-tagged set exists and promotes those exact four image
+digests to `latest`.
+
+The recommended rolling private-stack mode uses all four `latest` references
+with `pull_policy: always`, as shown in `.env.example`. Wait for the whole
 [publishing run](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml)
-and use that same commit for all four images:
+to pass, then pull and redeploy the whole Compose project. The per-container
+Arcane updater stays disabled so one service cannot advance independently:
 
 ```sh
-REVISION="$(git rev-parse HEAD)"
-docker pull "ghcr.io/deftmartian/household-finance-bot:${REVISION}"
+docker compose --env-file .env pull \
+  finance-bot document-preparer actual-reader actual-writer
+docker compose --env-file .env up -d --no-build
 ```
 
-Production deployments should promote all four workflow-reported top-level
-digests together as `full-commit@sha256:digest`. See
-[Deployment](docs/deployment.md#use-published-images) for the Compose settings,
-inspection commands, and promotion boundary.
+For an immutable deployment or rollback, use all four workflow-reported
+top-level digests from one run as `full-commit@sha256:digest`. See
+[Deployment](docs/deployment.md#use-rolling-published-images) for the rolling,
+local-build, and pinned modes.
 
 ## Extending it
 

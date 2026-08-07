@@ -49,26 +49,66 @@ Copy `.env.example` to an untracked `.env`, adapt the non-secret values, and
 create each file-backed secret referenced by the Compose configuration. Render
 the final model before building or starting it.
 
-### Build this checkout
+### Use rolling published images
 
-The example defaults to building the four Household Finance application images
-from the current checkout:
+This is the recommended mode for a private stack that follows the public
+repository. `.env.example` defaults all four application services to their
+GHCR `latest` tags and sets `HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=always`.
+
+Every successful `main`
+[publishing workflow](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml)
+first publishes four Linux AMD64 images under the full 40-character commit.
+Only after all matrix jobs succeed does a final job resolve every commit tag
+and promote those exact four digests to `latest`.
+
+GHCR still moves the four package tags one at a time. Treat the overall-green
+workflow—not an individual package update—as the deployment boundary. Once it
+passes, render, pull, and redeploy the whole project:
+
+```sh
+docker compose --env-file .env config --quiet
+docker compose --env-file .env config --images
+docker compose --env-file .env pull \
+  finance-bot document-preparer actual-reader actual-writer
+docker compose --env-file .env up -d --no-build
+docker compose --env-file .env ps
+docker compose --env-file .env images
+```
+
+If promotion fails after moving only some tags, do not deploy that run. Rerun
+the failed promotion job; its digest-pinned sources make the operation
+idempotent, and the final all-four check must pass before deployment.
+
+`pull_policy: always` refreshes a rolling tag when Compose creates or recreates
+a service; it does not schedule a deployment by itself. In Arcane, keep the
+per-container updater disabled and pull/redeploy the complete project only
+after the publish workflow succeeds.
+
+### Build this checkout locally
+
+The Compose file retains build targets for all four application services. To
+build the current checkout instead of using GHCR, set these overrides in the
+untracked `.env`:
+
+```dotenv
+HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=build
+FINANCE_BOT_IMAGE=household-finance-bot:local
+DOCUMENT_PREPARER_IMAGE=household-finance-document-preparer:local
+ACTUAL_READER_IMAGE=household-finance-actual-reader:local
+ACTUAL_WRITER_IMAGE=household-finance-actual-writer:local
+```
+
+Then render and build it:
 
 ```sh
 docker compose --env-file .env config --quiet
 docker compose --env-file .env build
 ```
 
-`HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=build` and the four local image names in
-`.env.example` make this source-build behavior explicit.
+### Pin an immutable image set
 
-### Use published images
-
-Every overall-green
-[publishing workflow](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml)
-produces four public Linux AMD64 images under one full 40-character commit tag.
-Select one successful run and set all four image references from that same
-commit:
+For a reviewed production promotion or rollback, select one overall-green
+workflow and use all four top-level digests from that same commit:
 
 ```dotenv
 HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=missing
@@ -81,9 +121,7 @@ ACTUAL_WRITER_IMAGE=ghcr.io/deftmartian/household-finance-actual-writer:<full-co
 The package pages are linked from the README, and each publish job records its
 top-level digest in the workflow summary. The additional `unknown/unknown`
 entries visible on a package page are provenance and SBOM attestations, not
-runnable platforms.
-
-Render and inspect the exact image set before pulling or starting it:
+runnable platforms. Render and inspect the pinned set before activating it:
 
 ```sh
 docker compose --env-file .env config --quiet
@@ -100,12 +138,11 @@ workflow-reported top-level digest, or switch the pull policy while any local
 image name remains. `actual-server` continues to use its separately pinned
 upstream image.
 
-Publishing creates registry artifacts; it does not deploy them. A production
-deployment should keep site-specific configuration in a private deployment
-repository, update all four digest pins in one reviewed change, and let its
-deployment system activate that change only after the rendered model and pulls
-succeed. Reverting that deployment change selects the prior image set for
-rollback.
+Publishing creates registry artifacts; it does not deploy them. Keep
+site-specific configuration in a private deployment repository. That repository
+can either follow the rolling set through a whole-project redeploy after a green
+workflow, or update all four digest pins in one reviewed change. Reverting a
+pin change selects the prior image set for rollback.
 
 The reader and writer run as UID/GID `1000:1000`. Their generated contracts
 must be readable by that identity; mode `0400` with matching ownership is the

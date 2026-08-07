@@ -6,8 +6,8 @@ x-arcane:
 
 services:
   finance-bot:
-    image: ${FINANCE_BOT_IMAGE:-household-finance-bot:local}
-    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-build}
+    image: ${FINANCE_BOT_IMAGE:-ghcr.io/deftmartian/household-finance-bot:latest}
+    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-always}
     build:
       context: .
       target: finance-runtime
@@ -95,8 +95,8 @@ services:
         max-file: '3'
 
   document-preparer:
-    image: ${DOCUMENT_PREPARER_IMAGE:-household-finance-document-preparer:local}
-    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-build}
+    image: ${DOCUMENT_PREPARER_IMAGE:-ghcr.io/deftmartian/household-finance-document-preparer:latest}
+    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-always}
     build:
       context: .
       target: document-preparer-runtime
@@ -143,8 +143,8 @@ services:
         max-file: '3'
 
   actual-reader:
-    image: ${ACTUAL_READER_IMAGE:-household-finance-actual-reader:local}
-    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-build}
+    image: ${ACTUAL_READER_IMAGE:-ghcr.io/deftmartian/household-finance-actual-reader:latest}
+    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-always}
     build:
       context: .
       target: actual-reader-runtime
@@ -263,8 +263,8 @@ services:
         max-file: '3'
 
   actual-writer:
-    image: ${ACTUAL_WRITER_IMAGE:-household-finance-actual-writer:local}
-    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-build}
+    image: ${ACTUAL_WRITER_IMAGE:-ghcr.io/deftmartian/household-finance-actual-writer:latest}
+    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-always}
     build:
       context: .
       target: actual-writer-runtime

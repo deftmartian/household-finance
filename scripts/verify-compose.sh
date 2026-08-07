@@ -4,8 +4,9 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 rendered="$(mktemp)"
 rendered_json="$(mktemp)"
-published_rendered_json="$(mktemp)"
-trap 'rm -f -- "$rendered" "$rendered_json" "$published_rendered_json"' EXIT
+local_rendered_json="$(mktemp)"
+pinned_rendered_json="$(mktemp)"
+trap 'rm -f -- "$rendered" "$rendered_json" "$local_rendered_json" "$pinned_rendered_json"' EXIT
 
 docker compose \
   --project-directory "$repo_root" \
@@ -60,7 +61,7 @@ require 'ACTUAL_CONFIG_PATH: /run/secrets/actual_oidc_config\.json' 'Actual must
 require 'ACTUAL_AUTO_APPROVAL_ENABLED: "false"' 'Actual update auto-approval must default off'
 require 'INTAKE_MODE: disabled' 'Talk intake must default disabled'
 require 'com.getarcaneapp.arcane.updater: "false"' 'Arcane per-container updates must be disabled'
-require 'pull_policy: build' 'the source-build example must rebuild the local application images'
+require 'pull_policy: always' 'the rolling example must refresh the published application images'
 require 'source: attachment-shadow-data' 'attachment shadow state must use a dedicated named volume'
 require 'source: actual-data' 'Actual state must use a named volume'
 require 'source: actual-reader-data' 'the Actual reader must use separate state storage'
@@ -85,6 +86,34 @@ reject 'published:' 'host ports are forbidden; ingress must use the service VLAN
 reject 'ACTUAL_OPENID_CLIENT_SECRET' 'the Actual OIDC client secret must not be exposed through container environment variables'
 
 if ! jq -e '
+  .services["finance-bot"].image == "ghcr.io/deftmartian/household-finance-bot:latest" and
+  .services["document-preparer"].image == "ghcr.io/deftmartian/household-finance-document-preparer:latest" and
+  .services["actual-reader"].image == "ghcr.io/deftmartian/household-finance-actual-reader:latest" and
+  .services["actual-writer"].image == "ghcr.io/deftmartian/household-finance-actual-writer:latest" and
+  ([
+    .services["finance-bot"],
+    .services["document-preparer"],
+    .services["actual-reader"],
+    .services["actual-writer"]
+  ] | all(.pull_policy == "always"))
+' "$rendered_json" >/dev/null; then
+  printf 'compose verification failed: the rolling image defaults are incorrect\n' >&2
+  exit 1
+fi
+
+env \
+  HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=build \
+  FINANCE_BOT_IMAGE=household-finance-bot:local \
+  DOCUMENT_PREPARER_IMAGE=household-finance-document-preparer:local \
+  ACTUAL_READER_IMAGE=household-finance-actual-reader:local \
+  ACTUAL_WRITER_IMAGE=household-finance-actual-writer:local \
+  docker compose \
+  --project-directory "$repo_root" \
+  --env-file "$repo_root/.env.example" \
+  -f "$repo_root/compose.yaml" \
+  config --format json >"$local_rendered_json"
+
+if ! jq -e '
   .services["finance-bot"].image == "household-finance-bot:local" and
   .services["document-preparer"].image == "household-finance-document-preparer:local" and
   .services["actual-reader"].image == "household-finance-actual-reader:local" and
@@ -94,9 +123,14 @@ if ! jq -e '
     .services["document-preparer"],
     .services["actual-reader"],
     .services["actual-writer"]
-  ] | all(.pull_policy == "build"))
-' "$rendered_json" >/dev/null; then
-  printf 'compose verification failed: the local image defaults are incorrect\n' >&2
+  ] | all(.pull_policy == "build")) and
+  .services["finance-bot"].build.target == "finance-runtime" and
+  .services["document-preparer"].build.target == "document-preparer-runtime" and
+  .services["actual-reader"].build.target == "actual-reader-runtime" and
+  .services["actual-writer"].build.target == "actual-writer-runtime" and
+  .services["actual-server"].image == "actualbudget/actual-server:26.7.0"
+' "$local_rendered_json" >/dev/null; then
+  printf 'compose verification failed: the local-build overrides are incorrect\n' >&2
   exit 1
 fi
 
@@ -116,7 +150,7 @@ env \
   --project-directory "$repo_root" \
   --env-file "$repo_root/.env.example" \
   -f "$repo_root/compose.yaml" \
-  config --format json >"$published_rendered_json"
+  config --format json >"$pinned_rendered_json"
 
 if ! jq -e \
   --arg finance_bot_image "$finance_bot_image" \
@@ -138,8 +172,8 @@ if ! jq -e \
   .services["actual-reader"].build.target == "actual-reader-runtime" and
   .services["actual-writer"].build.target == "actual-writer-runtime" and
   .services["actual-server"].image == "actualbudget/actual-server:26.7.0"
-' "$published_rendered_json" >/dev/null; then
-  printf 'compose verification failed: the published-image overrides are incorrect\n' >&2
+' "$pinned_rendered_json" >/dev/null; then
+  printf 'compose verification failed: the pinned-image overrides are incorrect\n' >&2
   exit 1
 fi
 
@@ -165,7 +199,7 @@ if ! jq -e '
   .services["actual-server"].cpus == 2 and
   (.services["finance-bot"].networks | has("finance-internal") | not) and
   (.services["finance-bot"].networks | has("finance-query")) and
-  .services["finance-bot"].pull_policy == "build" and
+  .services["finance-bot"].pull_policy == "always" and
   .services["finance-bot"].build.target == "finance-runtime" and
   .services["finance-bot"].read_only == true and
   .services["finance-bot"].user == "1000:1000" and
@@ -208,7 +242,7 @@ if ! jq -e '
   .services["finance-bot"].volumes[0].source == "attachment-shadow-data" and
   (.services["finance-bot"].ports == null) and
   .services["finance-bot"].depends_on["actual-reader"].condition == "service_healthy" and
-  .services["document-preparer"].pull_policy == "build" and
+  .services["document-preparer"].pull_policy == "always" and
   .services["document-preparer"].build.target == "document-preparer-runtime" and
   .services["document-preparer"].read_only == true and
   .services["document-preparer"].user == "1000:1000" and
@@ -225,7 +259,7 @@ if ! jq -e '
   (.services["document-preparer"].volumes == null) and
   (.services["document-preparer"].ports == null) and
   (.services["document-preparer"].dns == null) and
-  .services["actual-reader"].pull_policy == "build" and
+  .services["actual-reader"].pull_policy == "always" and
   .services["actual-reader"].build.target == "actual-reader-runtime" and
   .services["actual-reader"].read_only == true and
   .services["actual-reader"].user == "1000:1000" and
@@ -270,8 +304,8 @@ fi
 
 if ! jq -e '
   .services["actual-writer"].profiles == null and
-  .services["actual-writer"].image == "household-finance-actual-writer:local" and
-  .services["actual-writer"].pull_policy == "build" and
+  .services["actual-writer"].image == "ghcr.io/deftmartian/household-finance-actual-writer:latest" and
+  .services["actual-writer"].pull_policy == "always" and
   .services["actual-writer"].build.target == "actual-writer-runtime" and
   .services["actual-writer"].restart == "unless-stopped" and
   .services["actual-writer"].init == true and

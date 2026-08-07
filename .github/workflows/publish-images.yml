@@ -98,3 +98,95 @@ jobs:
           IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: printf -- '- `%s@%s`\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  promote-latest:
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote the verified image set to latest
+        shell: bash
+        env:
+          REGISTRY_PREFIX: ghcr.io/${{ github.repository_owner }}
+          REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          images=(
+            household-finance-bot
+            household-finance-document-preparer
+            household-finance-actual-reader
+            household-finance-actual-writer
+          )
+          digests=()
+
+          # Resolve the complete immutable set before moving any rolling tag.
+          for image in "${images[@]}"; do
+            commit_ref="${REGISTRY_PREFIX}/${image}:${REVISION}"
+            manifest="$(docker buildx imagetools inspect "$commit_ref" --format '{{json .Manifest}}')"
+            digest="$(jq -r '.digest // empty' <<<"$manifest")"
+            labels="$(docker buildx imagetools inspect "$commit_ref" --format '{{json .Image.Config.Labels}}')"
+            if
+              [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+                ! jq -e '
+                  .mediaType == "application/vnd.oci.image.index.v1+json" and
+                  ([
+                    .manifests[] |
+                    select(.platform.os == "linux" and .platform.architecture == "amd64")
+                  ] | length) == 1 and
+                  ([
+                    .manifests[] |
+                    select(
+                      (.platform.os == "linux" and .platform.architecture == "amd64") or
+                      (
+                        .platform.os == "unknown" and
+                        .platform.architecture == "unknown" and
+                        .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+                      )
+                    )
+                  ] | length) == (.manifests | length)
+                ' <<<"$manifest" >/dev/null ||
+                ! jq -e --arg revision "$REVISION" '
+                  .["org.opencontainers.image.revision"] == $revision
+                ' <<<"$labels" >/dev/null
+            then
+              echo "Invalid platform, digest, attestation, or revision metadata for ${commit_ref}" >&2
+              exit 1
+            fi
+            digests+=("$digest")
+          done
+
+          for index in "${!images[@]}"; do
+            image_ref="${REGISTRY_PREFIX}/${images[$index]}"
+            docker buildx imagetools create \
+              --tag "${image_ref}:latest" \
+              "${image_ref}@${digests[$index]}"
+          done
+
+          {
+            echo '### Promoted latest image set'
+            echo
+            for index in "${!images[@]}"; do
+              image_ref="${REGISTRY_PREFIX}/${images[$index]}"
+              latest_digest="$(docker buildx imagetools inspect "${image_ref}:latest" --format '{{.Manifest.Digest}}')"
+              if [[ "$latest_digest" != "${digests[$index]}" ]]; then
+                echo "Latest digest mismatch for ${image_ref}" >&2
+                exit 1
+              fi
+              printf -- '- `%s:latest` -> `%s@%s`\n' \
+                "$image_ref" "$image_ref" "$latest_digest"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
