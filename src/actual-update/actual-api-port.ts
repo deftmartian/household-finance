@@ -223,12 +223,12 @@ function assertSafeMutation(mutation: ActualUpdateMutation): void {
 /**
  * This adapter requires the client returned by `@actual-app/api.init()`.
  *
- * In @actual-app/api 26.7.0 the public `updateTransaction()` worker handler
- * starts `transactions-batch-update` without awaiting it. Using the typed core
- * client here is deliberate: `send('transactions-batch-update', ...)` is
- * awaited, supports one parent-plus-children mutation, and can therefore be
- * followed by an exact readback. Do not replace this with the public helper
- * without first verifying that version's runtime implementation.
+ * In @actual-app/api 26.8.1 the public `updateTransaction()` helper awaits a
+ * single-row update, but it cannot express one parent-plus-children mutation.
+ * Using the typed core client here is deliberate:
+ * `send('transactions-batch-update', ...)` is awaited, keeps the complete
+ * mutation in one batch, and can therefore be followed by an exact readback.
+ * Do not replace it without verifying the installed package's runtime behavior.
  */
 export class ActualApiExistingTransactionUpdatePort implements ActualExistingTransactionUpdatePort {
   constructor(

@@ -197,7 +197,7 @@ export interface ActualReadApiBudgetMonth {
   })[];
 }
 export interface ActualReadApiAqlQuery {
-  select(fields?: readonly string[]): ActualReadApiAqlQuery;
+  select(fields?: string[]): ActualReadApiAqlQuery;
 }
 export interface ActualReadApiFacade {
   init(config: ActualReadApiInitConfig): Promise<unknown>;

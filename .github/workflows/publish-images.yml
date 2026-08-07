@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '17 9 * * *'
 
 permissions:
   contents: read
@@ -41,8 +46,14 @@ jobs:
       - name: Verify application
         run: pnpm verify
 
+      - name: Verify Actual compatibility
+        env:
+          CONTAINER_CLI: docker
+        run: bash scripts/verify-actual-compat.sh
+
   publish:
     needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

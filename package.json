@@ -32,7 +32,7 @@
     "verify:compose": "bash scripts/verify-compose.sh"
   },
   "dependencies": {
-    "@actual-app/api": "26.7.0",
+    "@actual-app/api": "26.8.1",
     "better-sqlite3": "12.4.1",
     "sharp": "0.35.3",
     "zod": "^4.4.3"

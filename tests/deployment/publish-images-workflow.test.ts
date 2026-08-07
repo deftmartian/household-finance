@@ -18,6 +18,14 @@ const expectedImages = [
 ];
 
 describe('container publishing workflow', () => {
+  it('verifies pull requests and Actual latest compatibility without publishing', () => {
+    expect(workflow).toMatch(/pull_request:\n\s+branches:\n\s+- main/);
+    expect(workflow).toContain('run: bash scripts/verify-actual-compat.sh');
+    expect(publish).toContain(
+      "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+    );
+  });
+
   it('publishes only commit-tagged matrix images before promotion', () => {
     expect(publishStart).toBeGreaterThan(0);
     expect(promoteStart).toBeGreaterThan(publishStart);

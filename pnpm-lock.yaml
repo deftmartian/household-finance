@@ -11,8 +11,8 @@ importers:
   .:
     dependencies:
       '@actual-app/api':
-        specifier: 26.7.0
-        version: 26.7.0
+        specifier: 26.8.1
+        version: 26.8.1
       better-sqlite3:
         specifier: 12.4.1
         version: 12.4.1
@@ -52,23 +52,23 @@ importers:
         version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.1))
 
 packages:
-  '@actual-app/api@26.7.0':
+  '@actual-app/api@26.8.1':
     resolution:
       {
-        integrity: sha512-nZDZAE6blc1HTdNEDGomAijE9Xgw+vBwUPkUsD63MVyAu92Vyi8H7hqueePtoERo2T9HYkMunXlABRrcPwr1KA==,
+        integrity: sha512-FpOjTdbXEUlph1pElNANT/y2TwNn3vGbR/4SRRtic6x2kZIrrKZBCx4+X5/GobVNLPGJX66p6tVcki41nqpPZA==,
       }
     engines: { node: '>=20' }
 
-  '@actual-app/core@26.7.0':
+  '@actual-app/core@26.8.1':
     resolution:
       {
-        integrity: sha512-OkssXglnNvyq2kVCPvBNNOSb9FoXwyEHWeYGyW0OwoL34Rirp8eCiz4Gz33AweEEPieW9EdWLR7rU3fPPs/8ZQ==,
+        integrity: sha512-1uvhHqZ4QeBeOkEzLr+OAvRKQWSZr1E+oO32V2v4HgqwUF1MUkHtUZqEaf7WQswaF8hNNTI0GeL2goVbTJu6xg==,
       }
 
-  '@actual-app/crdt@3.1.0':
+  '@actual-app/crdt@3.1.1':
     resolution:
       {
-        integrity: sha512-1XQM2e4zA73kI8WJ/Le0Q3aMA9X9BRYQsCpAl0R6NN+jGgUN0CylfaupknhAjUGU8m3mY9xomOkPKj4JqJF1Dw==,
+        integrity: sha512-zuUDbA12dYF6QInFFDdAbWcl4stDL9IWEL6HPzqlmW/T5nNNYKqclOAMCXkXx1e8TJ3jvhHnwl4/m6xzeDEZpw==,
       }
 
   '@bufbuild/protobuf@2.13.0':
@@ -682,14 +682,15 @@ packages:
         integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==,
       }
 
-  '@napi-rs/wasm-runtime@1.1.6':
+  '@napi-rs/wasm-runtime@1.2.2':
     resolution:
       {
-        integrity: sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==,
+        integrity: sha512-JfB4kuJQjaoHuCTseIINHtHWeJnvgEcxjwA5t/Y00ZgaOO1Crz3fjT/p8kT28zA/Caz7oiUMn3d6H2yOVCVwuw==,
       }
+    engines: { node: ^20.19.0 || ^22.13.0 || >=23.5.0 }
     peerDependencies:
-      '@emnapi/core': ^1.7.1
-      '@emnapi/runtime': ^1.7.1
+      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.3
+      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.3
 
   '@oxc-project/types@0.139.0':
     resolution:
@@ -1072,13 +1073,6 @@ packages:
     engines: { node: '>=0.4.0' }
     hasBin: true
 
-  adm-zip@0.6.0:
-    resolution:
-      {
-        integrity: sha512-XleryMhbuksdKtofnWZ9Sk+4CUTbms4Mb/EU32SZwToAyZ5RgVos/ki8n+yr0LWHOGKuakbXTuuYNHLQjhddgg==,
-      }
-    engines: { node: '>=14.0' }
-
   ajv@6.15.0:
     resolution:
       {
@@ -1182,16 +1176,16 @@ packages:
       }
     engines: { node: '>= 8' }
 
-  csv-parse@6.2.1:
+  csv-parse@7.0.2:
     resolution:
       {
-        integrity: sha512-LRLMV+UCyfMokp8Wb411duBf1gaBKJfOfBWU9eHMJ+b+cJYZsNu3AFmjJf3+yPGd59Exz1TsMjaSFyxnYB9+IQ==,
+        integrity: sha512-uKZghv9UmPkMVLYy//KZ9HFAIJsl7wkhoEdIL0+rhuSY9pZQlhaeGEDPIe+/w7eh81MOql8Q/9+inAGWG6ZHYA==,
       }
 
-  csv-stringify@6.8.1:
+  csv-stringify@6.8.3:
     resolution:
       {
-        integrity: sha512-tZ6X6TKQyQgCo5OptXcyAbfN1pwmoxEqELPQ7KFazNErx7kiVsDK8o+VYRXhfMl4N9vvOOLXuioquR2MeP847A==,
+        integrity: sha512-gIeSCvq5F4VtXV3naV3VAewLhBkiZBz+PPhTOA8H3Y8h/ELa+R1ml0GZck/4/Nzo9ep2lvOluilJ6MJlbZsKMA==,
       }
 
   date-fns@4.4.0:
@@ -1390,6 +1384,12 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  fflate@0.8.3:
+    resolution:
+      {
+        integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==,
+      }
 
   file-entry-cache@8.0.0:
     resolution:
@@ -1729,10 +1729,10 @@ packages:
         integrity: sha512-5vQEh3y+DG/lMPM0mCGPDnyV8chYg/g7rl6v3Gd8WMF9S429ox3Xk8qrk174kWhG767KQMqqxLD1WnGd77hiew==,
       }
 
-  nanoid@3.3.16:
+  nanoid@3.3.18:
     resolution:
       {
-        integrity: sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==,
+        integrity: sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==,
       }
     engines: { node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1 }
     hasBin: true
@@ -1829,10 +1829,10 @@ packages:
       }
     engines: { node: '>=12' }
 
-  postcss@8.5.23:
+  postcss@8.5.26:
     resolution:
       {
-        integrity: sha512-g50586zr4bZmwFiTlflMu8E0bDTb5I5gertgwAKmsdUlTQIhZtunzUlD1WSzwcVWPoAVpsrA6vlfCD7oXvRwgg==,
+        integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==,
       }
     engines: { node: ^10 || ^12 || >=14 }
 
@@ -2297,26 +2297,26 @@ packages:
       }
 
 snapshots:
-  '@actual-app/api@26.7.0':
+  '@actual-app/api@26.8.1':
     dependencies:
-      '@actual-app/core': 26.7.0
-      '@actual-app/crdt': 3.1.0
+      '@actual-app/core': 26.8.1
+      '@actual-app/crdt': 3.1.1
       better-sqlite3: 12.11.1
       compare-versions: 6.1.1
       uuid: 14.0.1
 
-  '@actual-app/core@26.7.0':
+  '@actual-app/core@26.8.1':
     dependencies:
       '@jlongster/sql.js': 1.6.7
       '@rschedule/core': 1.5.0
       '@rschedule/standard-date-adapter': 1.5.0(@rschedule/core@1.5.0)
       absurd-sql: 0.0.54
-      adm-zip: 0.6.0
       better-sqlite3: 12.11.1
-      csv-parse: 6.2.1
-      csv-stringify: 6.8.1
+      csv-parse: 7.0.2
+      csv-stringify: 6.8.3
       date-fns: 4.4.0
       es-toolkit: 1.50.0
+      fflate: 0.8.3
       handlebars: 4.7.9
       hyperformula: 3.3.0
       lru-cache: 11.5.2
@@ -2324,7 +2324,7 @@ snapshots:
       uuid: 14.0.1
       xml2js: 0.6.2
 
-  '@actual-app/crdt@3.1.0':
+  '@actual-app/crdt@3.1.1':
     dependencies:
       '@bufbuild/protobuf': 2.13.0
       murmurhash: 2.0.1
@@ -2586,7 +2586,7 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
-  '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
+  '@napi-rs/wasm-runtime@1.2.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
@@ -2635,7 +2635,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
-      '@napi-rs/wasm-runtime': 1.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
+      '@napi-rs/wasm-runtime': 1.2.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
     optional: true
 
   '@rolldown/binding-win32-arm64-msvc@1.1.5':
@@ -2822,8 +2822,6 @@ snapshots:
 
   acorn@8.17.0: {}
 
-  adm-zip@0.6.0: {}
-
   ajv@6.15.0:
     dependencies:
       fast-deep-equal: 3.1.3
@@ -2884,9 +2882,9 @@ snapshots:
       shebang-command: 2.0.0
       which: 2.0.2
 
-  csv-parse@6.2.1: {}
+  csv-parse@7.0.2: {}
 
-  csv-stringify@6.8.1: {}
+  csv-stringify@6.8.3: {}
 
   date-fns@4.4.0: {}
 
@@ -3024,6 +3022,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
       picomatch: 4.0.5
+
+  fflate@0.8.3: {}
 
   file-entry-cache@8.0.0:
     dependencies:
@@ -3178,7 +3178,7 @@ snapshots:
 
   murmurhash@2.0.1: {}
 
-  nanoid@3.3.16: {}
+  nanoid@3.3.18: {}
 
   napi-build-utils@2.0.0: {}
 
@@ -3223,9 +3223,9 @@ snapshots:
 
   picomatch@4.0.5: {}
 
-  postcss@8.5.23:
+  postcss@8.5.26:
     dependencies:
-      nanoid: 3.3.16
+      nanoid: 3.3.18
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
@@ -3441,7 +3441,7 @@ snapshots:
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
-      postcss: 8.5.23
+      postcss: 8.5.26
       rolldown: 1.1.5
       tinyglobby: 0.2.17
     optionalDependencies:

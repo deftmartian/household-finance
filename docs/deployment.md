@@ -61,9 +61,13 @@ first publishes four Linux AMD64 images under the full 40-character commit.
 Only after all matrix jobs succeed does a final job resolve every commit tag
 and promote those exact four digests to `latest`.
 
-GHCR still moves the four package tags one at a time. Treat the overall-green
-workflow—not an individual package update—as the deployment boundary. Once it
-passes, render, pull, and redeploy the whole project:
+GHCR moves the four package tags during one final promotion job. Confirm that
+job is green before a manual deployment. The application services use stable
+interfaces and do not require an atomic, same-revision restart, so an Arcane
+installation with auto-update enabled may update each eligible service on its
+normal schedule.
+
+To deploy manually:
 
 ```sh
 docker compose --env-file .env config --quiet
@@ -75,14 +79,22 @@ docker compose --env-file .env ps
 docker compose --env-file .env images
 ```
 
-If promotion fails after moving only some tags, do not deploy that run. Rerun
-the failed promotion job; its digest-pinned sources make the operation
-idempotent, and the final all-four check must pass before deployment.
+If promotion fails after moving only some tags, rerun the failed promotion job.
+Its digest-pinned sources make the operation idempotent, and the final all-four
+check confirms that every rolling tag converged.
 
 `pull_policy: always` refreshes a rolling tag when Compose creates or recreates
-a service; it does not schedule a deployment by itself. In Arcane, keep the
-per-container updater disabled and pull/redeploy the complete project only
-after the publish workflow succeeds.
+a service; it does not schedule a deployment by itself. Arcane auto-update is
+the scheduler when enabled globally. All five services deliberately omit
+Arcane's updater opt-out and follow stable `latest` images.
+
+`@actual-app/api` is an embedded application dependency rather than a separate
+container. It stays exactly locked for reproducible images, while Dependabot
+checks it daily and opens a pull request when Actual publishes a new version.
+Those pull requests run the same verification workflow as other changes. CI
+also starts a disposable `actual-server:latest` and verifies that the installed
+API can create, upload, download, sync, and update a synthetic budget through
+the same internal batch handler used by the production writer.
 
 ### Build this checkout locally
 
@@ -135,14 +147,13 @@ docker compose --env-file .env images
 
 Do not mix commits, use a child-platform or attestation digest in place of the
 workflow-reported top-level digest, or switch the pull policy while any local
-image name remains. `actual-server` continues to use its separately pinned
-upstream image.
+image name remains. `actual-server` follows the upstream stable `latest` image.
 
 Publishing creates registry artifacts; it does not deploy them. Keep
 site-specific configuration in a private deployment repository. That repository
-can either follow the rolling set through a whole-project redeploy after a green
-workflow, or update all four digest pins in one reviewed change. Reverting a
-pin change selects the prior image set for rollback.
+can follow the rolling tags with its platform's updater, redeploy manually, or
+update digest pins in a reviewed change. Reverting a pin change selects the
+prior image set for rollback.
 
 The reader and writer run as UID/GID `1000:1000`. Their generated contracts
 must be readable by that identity; mode `0400` with matching ownership is the

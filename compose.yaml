@@ -86,8 +86,6 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 4
-    labels:
-      com.getarcaneapp.arcane.updater: 'false'
     logging:
       driver: json-file
       options:
@@ -134,8 +132,6 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 4
-    labels:
-      com.getarcaneapp.arcane.updater: 'false'
     logging:
       driver: json-file
       options:
@@ -199,8 +195,6 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 6
-    labels:
-      com.getarcaneapp.arcane.updater: 'false'
     logging:
       driver: json-file
       options:
@@ -208,7 +202,8 @@ services:
         max-file: '3'
 
   actual-server:
-    image: actualbudget/actual-server:26.7.0
+    image: actualbudget/actual-server:latest
+    pull_policy: always
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -254,8 +249,6 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 6
-    labels:
-      com.getarcaneapp.arcane.updater: 'false'
     logging:
       driver: json-file
       options:
@@ -316,8 +309,6 @@ services:
     depends_on:
       actual-server:
         condition: service_healthy
-    labels:
-      com.getarcaneapp.arcane.updater: 'false'
     logging:
       driver: json-file
       options:
