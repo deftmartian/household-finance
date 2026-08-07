@@ -30,6 +30,11 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
+      - name: Install verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ripgrep
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
