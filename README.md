@@ -1,5 +1,7 @@
 # Household Finance
 
+[![Publish container images](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml/badge.svg)](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml)
+
 Household Finance turns a private chat room into an interface for everyday
 bookkeeping. Send it a receipt, ask where the money went, or tell it how a
 transaction should be categorized. It does the work in the background and
@@ -109,10 +111,37 @@ the Actual and Nextcloud setup.
 See [Deployment](docs/deployment.md) for the complete setup and production
 configuration.
 
-Successful `main` builds publish Linux AMD64 images for the four application
-services to GitHub Container Registry. Images are tagged with the full Git
-commit; production deployments should promote a tested build by immutable
-digest rather than following a mutable tag.
+## Container images
+
+A successful `main` workflow publishes Linux AMD64 images for the four
+application services to GitHub Container Registry:
+
+| Compose service     | Published package                                                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `finance-bot`       | [`household-finance-bot`](https://github.com/deftmartian/household-finance/pkgs/container/household-finance-bot)                             |
+| `document-preparer` | [`household-finance-document-preparer`](https://github.com/deftmartian/household-finance/pkgs/container/household-finance-document-preparer) |
+| `actual-reader`     | [`household-finance-actual-reader`](https://github.com/deftmartian/household-finance/pkgs/container/household-finance-actual-reader)         |
+| `actual-writer`     | [`household-finance-actual-writer`](https://github.com/deftmartian/household-finance/pkgs/container/household-finance-actual-writer)         |
+
+GitHub displays registry artifacts as packages. They are container _images_;
+running containers appear in Docker or Arcane only after a Compose deployment
+creates them. The fifth Compose service, `actual-server`, uses the upstream
+`actualbudget/actual-server` image and is not published by this repository.
+
+Each application image is tagged with the full 40-character Git commit. There
+is no `latest` tag. Choose one overall-green
+[publishing run](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml)
+and use that same commit for all four images:
+
+```sh
+REVISION="$(git rev-parse HEAD)"
+docker pull "ghcr.io/deftmartian/household-finance-bot:${REVISION}"
+```
+
+Production deployments should promote all four workflow-reported top-level
+digests together as `full-commit@sha256:digest`. See
+[Deployment](docs/deployment.md#use-published-images) for the Compose settings,
+inspection commands, and promotion boundary.
 
 ## Extending it
 

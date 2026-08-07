@@ -32,7 +32,7 @@ Use Node.js 24, Corepack, and the pnpm version declared in `package.json`.
 corepack enable
 corepack pnpm install --frozen-lockfile
 corepack pnpm verify
-docker build -t household-finance-bot:local .
+docker build --target finance-runtime -t household-finance-bot:local .
 ```
 
 `pnpm verify` checks formatting, lint, types, tests, the production build, and

@@ -4,7 +4,8 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 rendered="$(mktemp)"
 rendered_json="$(mktemp)"
-trap 'rm -f -- "$rendered" "$rendered_json"' EXIT
+published_rendered_json="$(mktemp)"
+trap 'rm -f -- "$rendered" "$rendered_json" "$published_rendered_json"' EXIT
 
 docker compose \
   --project-directory "$repo_root" \
@@ -59,7 +60,7 @@ require 'ACTUAL_CONFIG_PATH: /run/secrets/actual_oidc_config\.json' 'Actual must
 require 'ACTUAL_AUTO_APPROVAL_ENABLED: "false"' 'Actual update auto-approval must default off'
 require 'INTAKE_MODE: disabled' 'Talk intake must default disabled'
 require 'com.getarcaneapp.arcane.updater: "false"' 'Arcane per-container updates must be disabled'
-require 'pull_policy: build' 'Arcane GitOps deploys must rebuild the local finance-bot image'
+require 'pull_policy: build' 'the source-build example must rebuild the local application images'
 require 'source: attachment-shadow-data' 'attachment shadow state must use a dedicated named volume'
 require 'source: actual-data' 'Actual state must use a named volume'
 require 'source: actual-reader-data' 'the Actual reader must use separate state storage'
@@ -82,6 +83,65 @@ reject 'source: /mnt/ncdata' 'direct Nextcloud data mounts are forbidden'
 reject 'source: /home/' 'home-directory mounts are forbidden'
 reject 'published:' 'host ports are forbidden; ingress must use the service VLAN and reverse proxy'
 reject 'ACTUAL_OPENID_CLIENT_SECRET' 'the Actual OIDC client secret must not be exposed through container environment variables'
+
+if ! jq -e '
+  .services["finance-bot"].image == "household-finance-bot:local" and
+  .services["document-preparer"].image == "household-finance-document-preparer:local" and
+  .services["actual-reader"].image == "household-finance-actual-reader:local" and
+  .services["actual-writer"].image == "household-finance-actual-writer:local" and
+  ([
+    .services["finance-bot"],
+    .services["document-preparer"],
+    .services["actual-reader"],
+    .services["actual-writer"]
+  ] | all(.pull_policy == "build"))
+' "$rendered_json" >/dev/null; then
+  printf 'compose verification failed: the local image defaults are incorrect\n' >&2
+  exit 1
+fi
+
+published_revision='0123456789abcdef0123456789abcdef01234567'
+finance_bot_image="ghcr.io/deftmartian/household-finance-bot:${published_revision}@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+document_preparer_image="ghcr.io/deftmartian/household-finance-document-preparer:${published_revision}@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+actual_reader_image="ghcr.io/deftmartian/household-finance-actual-reader:${published_revision}@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+actual_writer_image="ghcr.io/deftmartian/household-finance-actual-writer:${published_revision}@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+
+env \
+  HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=missing \
+  FINANCE_BOT_IMAGE="$finance_bot_image" \
+  DOCUMENT_PREPARER_IMAGE="$document_preparer_image" \
+  ACTUAL_READER_IMAGE="$actual_reader_image" \
+  ACTUAL_WRITER_IMAGE="$actual_writer_image" \
+  docker compose \
+  --project-directory "$repo_root" \
+  --env-file "$repo_root/.env.example" \
+  -f "$repo_root/compose.yaml" \
+  config --format json >"$published_rendered_json"
+
+if ! jq -e \
+  --arg finance_bot_image "$finance_bot_image" \
+  --arg document_preparer_image "$document_preparer_image" \
+  --arg actual_reader_image "$actual_reader_image" \
+  --arg actual_writer_image "$actual_writer_image" '
+  .services["finance-bot"].image == $finance_bot_image and
+  .services["document-preparer"].image == $document_preparer_image and
+  .services["actual-reader"].image == $actual_reader_image and
+  .services["actual-writer"].image == $actual_writer_image and
+  ([
+    .services["finance-bot"],
+    .services["document-preparer"],
+    .services["actual-reader"],
+    .services["actual-writer"]
+  ] | all(.pull_policy == "missing")) and
+  .services["finance-bot"].build.target == "finance-runtime" and
+  .services["document-preparer"].build.target == "document-preparer-runtime" and
+  .services["actual-reader"].build.target == "actual-reader-runtime" and
+  .services["actual-writer"].build.target == "actual-writer-runtime" and
+  .services["actual-server"].image == "actualbudget/actual-server:26.7.0"
+' "$published_rendered_json" >/dev/null; then
+  printf 'compose verification failed: the published-image overrides are incorrect\n' >&2
+  exit 1
+fi
 
 if ! jq -e '
   (.services["actual-server"].networks | has("finance-internal")) and

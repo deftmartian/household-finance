@@ -47,12 +47,65 @@ The generic `compose.yaml` defines:
 
 Copy `.env.example` to an untracked `.env`, adapt the non-secret values, and
 create each file-backed secret referenced by the Compose configuration. Render
-the final model before building or starting it:
+the final model before building or starting it.
+
+### Build this checkout
+
+The example defaults to building the four Household Finance application images
+from the current checkout:
 
 ```sh
 docker compose --env-file .env config --quiet
 docker compose --env-file .env build
 ```
+
+`HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=build` and the four local image names in
+`.env.example` make this source-build behavior explicit.
+
+### Use published images
+
+Every overall-green
+[publishing workflow](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml)
+produces four public Linux AMD64 images under one full 40-character commit tag.
+Select one successful run and set all four image references from that same
+commit:
+
+```dotenv
+HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=missing
+FINANCE_BOT_IMAGE=ghcr.io/deftmartian/household-finance-bot:<full-commit>@sha256:<digest>
+DOCUMENT_PREPARER_IMAGE=ghcr.io/deftmartian/household-finance-document-preparer:<full-commit>@sha256:<digest>
+ACTUAL_READER_IMAGE=ghcr.io/deftmartian/household-finance-actual-reader:<full-commit>@sha256:<digest>
+ACTUAL_WRITER_IMAGE=ghcr.io/deftmartian/household-finance-actual-writer:<full-commit>@sha256:<digest>
+```
+
+The package pages are linked from the README, and each publish job records its
+top-level digest in the workflow summary. The additional `unknown/unknown`
+entries visible on a package page are provenance and SBOM attestations, not
+runnable platforms.
+
+Render and inspect the exact image set before pulling or starting it:
+
+```sh
+docker compose --env-file .env config --quiet
+docker compose --env-file .env config --images
+docker compose --env-file .env pull \
+  finance-bot document-preparer actual-reader actual-writer
+docker compose --env-file .env up -d --no-build
+docker compose --env-file .env ps
+docker compose --env-file .env images
+```
+
+Do not mix commits, use a child-platform or attestation digest in place of the
+workflow-reported top-level digest, or switch the pull policy while any local
+image name remains. `actual-server` continues to use its separately pinned
+upstream image.
+
+Publishing creates registry artifacts; it does not deploy them. A production
+deployment should keep site-specific configuration in a private deployment
+repository, update all four digest pins in one reviewed change, and let its
+deployment system activate that change only after the rendered model and pulls
+succeed. Reverting that deployment change selects the prior image set for
+rollback.
 
 The reader and writer run as UID/GID `1000:1000`. Their generated contracts
 must be readable by that identity; mode `0400` with matching ownership is the

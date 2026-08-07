@@ -6,8 +6,8 @@ x-arcane:
 
 services:
   finance-bot:
-    image: household-finance-bot:local
-    pull_policy: build
+    image: ${FINANCE_BOT_IMAGE:-household-finance-bot:local}
+    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-build}
     build:
       context: .
       target: finance-runtime
@@ -95,8 +95,8 @@ services:
         max-file: '3'
 
   document-preparer:
-    image: household-finance-document-preparer:local
-    pull_policy: build
+    image: ${DOCUMENT_PREPARER_IMAGE:-household-finance-document-preparer:local}
+    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-build}
     build:
       context: .
       target: document-preparer-runtime
@@ -143,8 +143,8 @@ services:
         max-file: '3'
 
   actual-reader:
-    image: household-finance-actual-reader:local
-    pull_policy: build
+    image: ${ACTUAL_READER_IMAGE:-household-finance-actual-reader:local}
+    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-build}
     build:
       context: .
       target: actual-reader-runtime
@@ -263,8 +263,8 @@ services:
         max-file: '3'
 
   actual-writer:
-    image: household-finance-actual-writer:local
-    pull_policy: build
+    image: ${ACTUAL_WRITER_IMAGE:-household-finance-actual-writer:local}
+    pull_policy: ${HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY:-build}
     build:
       context: .
       target: actual-writer-runtime

@@ -32,5 +32,5 @@ corepack pnpm typecheck
 corepack pnpm test
 corepack pnpm build
 corepack pnpm verify:compose
-docker build -t household-finance-bot:local .
+docker build --target finance-runtime -t household-finance-bot:local .
 ```
