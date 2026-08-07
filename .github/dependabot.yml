@@ -4,6 +4,7 @@ multi-ecosystem-groups:
   actual-budget:
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
 
 updates:
   - package-ecosystem: npm
@@ -11,14 +12,12 @@ updates:
     patterns:
       - '@actual-app/api'
     multi-ecosystem-group: actual-budget
-    open-pull-requests-limit: 1
 
   - package-ecosystem: docker-compose
     directory: /
     patterns:
       - actualbudget/actual-server
     multi-ecosystem-group: actual-budget
-    open-pull-requests-limit: 1
 
   - package-ecosystem: github-actions
     directory: /
