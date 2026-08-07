@@ -41,7 +41,7 @@ function body(message = 'How much did I spend on groceries?'): Buffer {
 
 function attachmentBody(
   overrides: Record<string, unknown> = {},
-  message = '',
+  message = '{file}',
   parameters: Record<string, unknown> = {},
 ): Buffer {
   return Buffer.from(
@@ -175,6 +175,17 @@ describe('Talk webhook intake', () => {
     expect(JSON.stringify(parsed)).not.toContain('private/path');
     expect(JSON.stringify(parsed)).not.toContain('private-name');
   });
+
+  it.each(['{file}', '  {FiLe}  '])(
+    'does not treat the Talk file placeholder as a household caption',
+    (message) => {
+      const rawBody = attachmentBody({}, message);
+
+      expect(
+        parseTalkReceiptWebhook(rawBody, headers(rawBody), policy),
+      ).not.toHaveProperty('captionHint');
+    },
+  );
 
   it('routes a Talk voice message to transcription', () => {
     const rawBody = attachmentBody({ mimetype: 'audio/mpeg' });

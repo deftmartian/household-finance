@@ -176,6 +176,16 @@ const supportedAttachmentActivityNames: ReadonlySet<string> = new Set([
   'message',
 ]);
 
+function attachmentCaption(message: string): string | undefined {
+  const normalized = message.normalize('NFC').trim();
+  // Nextcloud Talk uses this transport placeholder when no caption was
+  // authored. It is not authenticated household intent.
+  return normalized.length === 0 ||
+    normalized.toLocaleLowerCase('en') === '{file}'
+    ? undefined
+    : normalized;
+}
+
 function isFileParameter(value: unknown): boolean {
   return (
     typeof value === 'object' &&
@@ -437,9 +447,7 @@ export function parseTalkWebhook(
       };
     }
 
-    const normalizedCaption = message.normalize('NFC').trim();
-    const captionHint =
-      normalizedCaption.length === 0 ? undefined : normalizedCaption;
+    const captionHint = attachmentCaption(message);
     if (captionHint !== undefined && captionHint.length > 2_000) {
       throw new TalkWebhookRejectedError('invalid-payload');
     }
