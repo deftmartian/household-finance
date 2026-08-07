@@ -109,6 +109,11 @@ the Actual and Nextcloud setup.
 See [Deployment](docs/deployment.md) for the complete setup and production
 configuration.
 
+Successful `main` builds publish Linux AMD64 images for the four application
+services to GitHub Container Registry. Images are tagged with the full Git
+commit; production deployments should promote a tested build by immutable
+digest rather than following a mutable tag.
+
 ## Extending it
 
 A new chat integration needs to translate messages, attachments, replies, and
