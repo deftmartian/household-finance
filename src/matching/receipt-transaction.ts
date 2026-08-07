@@ -501,6 +501,7 @@ function scoreCandidate(
   receipt: ReceiptMatchIntent,
   candidate: ImportedTransactionCandidate,
   policy: ReceiptMatchPolicy,
+  requireMerchantEvidence = true,
 ): number | undefined {
   const foreignCurrency = receipt.currency !== candidate.currency;
   const exactPriorLink = linksReceipt(candidate, receipt.receiptId);
@@ -543,10 +544,11 @@ function scoreCandidate(
     receipt.paymentEvidence.kind === 'masked-card' &&
     candidate.accountLastFour === receipt.paymentEvidence.lastFour;
   if (
-    (!exactPriorLink &&
+    requireMerchantEvidence &&
+    ((!exactPriorLink &&
       nameScore < policy.minimumMerchantScore &&
       (hasMerchantText || foreignCurrency)) ||
-    (!exactPriorLink && !hasMerchantText && !exactAccountEvidence)
+      (!exactPriorLink && !hasMerchantText && !exactAccountEvidence))
   ) {
     return undefined;
   }
@@ -820,6 +822,23 @@ export function matchReceiptToImportedTransactions(
       return {
         disposition: 'ambiguous-set',
         candidateSets: subsetMatches,
+      };
+    }
+    // An exact same-currency charge can be offered for confirmation when only
+    // its merchant evidence is weak. Foreign conversion still requires the
+    // stronger source-amount and merchant safeguards above.
+    const merchantConfirmationCandidates = candidates
+      .filter((candidate) => candidate.currency === receipt.currency)
+      .map((candidate): ScoredCandidate | undefined => {
+        const score = scoreCandidate(receipt, candidate, policy, false);
+        return score === undefined ? undefined : { candidate, score };
+      })
+      .filter((entry): entry is ScoredCandidate => entry !== undefined)
+      .sort(compareScoredCandidates);
+    if (merchantConfirmationCandidates.length === 1) {
+      return {
+        disposition: 'ambiguous',
+        candidates: merchantConfirmationCandidates,
       };
     }
     return { disposition: 'pending', plausibleCandidateCount: 0 };

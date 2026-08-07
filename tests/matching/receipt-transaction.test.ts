@@ -332,6 +332,57 @@ describe('receipt to imported transaction matching', () => {
     });
   });
 
+  it('asks for confirmation when one exact CAD charge lacks merchant evidence among nearby charges', () => {
+    expect(
+      matchReceiptToImportedTransactions(
+        { ...receipt, paymentEvidence: { kind: 'unknown' } },
+        [
+          {
+            ...candidate,
+            payeeName: 'Different Merchant',
+          },
+          {
+            ...candidate,
+            transactionId: 'actual-nearby-amount',
+            importedId: 'simplefin-nearby-amount',
+            payeeName: 'Another Merchant',
+            amountMinorUnits: -1_700,
+          },
+        ],
+      ),
+    ).toMatchObject({
+      disposition: 'ambiguous',
+      candidates: [
+        {
+          candidate: {
+            importedId: 'simplefin-1',
+            payeeName: 'Different Merchant',
+          },
+        },
+      ],
+    });
+  });
+
+  it('keeps multiple exact CAD charges without merchant evidence pending', () => {
+    expect(
+      matchReceiptToImportedTransactions(receipt, [
+        {
+          ...candidate,
+          payeeName: 'Different Merchant',
+        },
+        {
+          ...candidate,
+          transactionId: 'actual-internal-2',
+          importedId: 'simplefin-2',
+          payeeName: 'Another Merchant',
+        },
+      ]),
+    ).toEqual({
+      disposition: 'pending',
+      plausibleCandidateCount: 0,
+    });
+  });
+
   it('matches the unique exact amount through a changed store payee', () => {
     expect(
       matchReceiptToImportedTransactions(
@@ -556,6 +607,21 @@ describe('receipt to imported transaction matching', () => {
     expect(
       matchReceiptToImportedTransactions({ ...receipt, currency: 'USD' }, [
         { ...candidate, amountMinorUnits: -20_000 },
+      ]),
+    ).toEqual({
+      disposition: 'pending',
+      plausibleCandidateCount: 0,
+    });
+  });
+
+  it('keeps one weak-merchant foreign-currency charge pending', () => {
+    expect(
+      matchReceiptToImportedTransactions({ ...receipt, currency: 'USD' }, [
+        {
+          ...candidate,
+          payeeName: 'Different Merchant',
+          amountMinorUnits: -2_341,
+        },
       ]),
     ).toEqual({
       disposition: 'pending',

@@ -87,6 +87,7 @@ function proposal(
 function completed(
   index: number,
   input: {
+    readonly captionHint?: string;
     readonly messageId?: string;
     readonly sourceSha256?: string;
     readonly totalMinor?: number | null;
@@ -114,6 +115,9 @@ function completed(
         sizeBytes: 100,
         mediaType: 'image/jpeg',
       },
+      ...(input.captionHint === undefined
+        ? {}
+        : { captionHint: input.captionHint }),
       receivedAt,
     },
     shadow: {
@@ -285,6 +289,201 @@ describe('ReceiptRecordPublicationWorkflow', () => {
               },
             },
           ],
+        },
+      ]);
+    } finally {
+      authenticator.destroy();
+      store.close();
+    }
+  });
+
+  it('does not revise or unsettle a canonical receipt for an exact-content resend', () => {
+    const sourceSha256 = 'a'.repeat(64);
+    const shadows = [
+      completed(1, {
+        sourceSha256,
+        extractedAt: '2026-07-29T12:00:01.000Z',
+      }),
+    ];
+    let now = new Date('2026-07-29T12:16:00.000Z');
+    const { authenticator, projection, store, workflow } = setup(
+      shadows,
+      () => now,
+    );
+    try {
+      expect(workflow.runOnce()).toMatchObject({
+        published: 1,
+        waitingForActual: 1,
+      });
+      markLatestApplied(store);
+      expect(workflow.runOnce()).toMatchObject({
+        unsettled: 0,
+        visible: 1,
+      });
+
+      shadows.push(
+        completed(2, {
+          sourceSha256,
+          receivedAt: '2026-07-29T12:20:00.000Z',
+          extractedAt: '2026-07-29T12:20:01.000Z',
+          item: 'Item 1',
+        }),
+      );
+      now = new Date('2026-07-29T12:20:02.000Z');
+
+      expect(workflow.runOnce()).toMatchObject({
+        scanned: 2,
+        candidates: 2,
+        bundles: 1,
+        unsettled: 0,
+        published: 0,
+        waitingForActual: 0,
+        visible: 1,
+      });
+      expect(store.getLatestInternal(receiptId)?.payload.revision).toBe(1);
+      expect(projection.listActiveRecords()).toMatchObject([
+        {
+          receiptId,
+          revision: 1,
+          extraction: { extractedAt: '2026-07-29T12:00:01.000Z' },
+        },
+      ]);
+    } finally {
+      authenticator.destroy();
+      store.close();
+    }
+  });
+
+  it('adds a caption from an exact-content resend without changing extraction provenance', () => {
+    const sourceSha256 = 'a'.repeat(64);
+    const shadows = [
+      completed(1, {
+        sourceSha256,
+        extractedAt: '2026-07-29T12:00:01.000Z',
+      }),
+    ];
+    let now = new Date('2026-07-29T12:16:00.000Z');
+    const { authenticator, projection, store, workflow } = setup(
+      shadows,
+      () => now,
+    );
+    try {
+      workflow.runOnce();
+      markLatestApplied(store);
+      expect(workflow.runOnce()).toMatchObject({ visible: 1 });
+      const original = parseHouseholdFinanceReceiptRecord(
+        JSON.parse(
+          store.getLatestInternal(receiptId)!.payload.desiredCanonicalJson,
+        ),
+      );
+      if (original.status !== 'active') {
+        throw new Error('Expected an active synthetic receipt');
+      }
+
+      shadows.push(
+        completed(2, {
+          sourceSha256,
+          receivedAt: '2026-07-29T12:20:00.000Z',
+          extractedAt: '2026-07-29T12:20:01.000Z',
+          item: 'Item 1',
+          captionHint: 'Birthday present.',
+        }),
+      );
+      now = new Date('2026-07-29T12:20:02.000Z');
+
+      expect(workflow.runOnce()).toMatchObject({
+        unsettled: 0,
+        published: 1,
+        waitingForActual: 1,
+        visible: 0,
+      });
+      const revised = parseHouseholdFinanceReceiptRecord(
+        JSON.parse(
+          store.getLatestInternal(receiptId)!.payload.desiredCanonicalJson,
+        ),
+      );
+      expect(revised).toMatchObject({
+        receiptId,
+        revision: 2,
+        updatedAt: '2026-07-29T12:20:01.000Z',
+        merchant: original.merchant,
+        purchaseDate: original.purchaseDate,
+        currency: original.currency,
+        amounts: original.amounts,
+        paymentEvidence: original.paymentEvidence,
+        items: original.items,
+        householdNotes: [{ text: 'Birthday present.' }],
+        extraction: {
+          extractedAt: '2026-07-29T12:00:01.000Z',
+          sourceSha256s: [sourceSha256],
+        },
+      });
+
+      markLatestApplied(store, '2026-07-29T12:20:03.000Z');
+      now = new Date('2026-07-29T12:20:04.000Z');
+      expect(workflow.runOnce()).toMatchObject({
+        unsettled: 0,
+        published: 0,
+        waitingForActual: 0,
+        visible: 1,
+      });
+      expect(projection.listActiveRecords()).toHaveLength(1);
+    } finally {
+      authenticator.destroy();
+      store.close();
+    }
+  });
+
+  it('preserves legacy extraction provenance for an unchanged source set after restart', () => {
+    const sourceSha256 = 'a'.repeat(64);
+    const shadow = completed(1, {
+      sourceSha256,
+      extractedAt: '2026-07-29T12:00:01.000Z',
+    });
+    const legacy = (() => {
+      const seeded = setup([shadow]);
+      try {
+        seeded.workflow.runOnce();
+        const record = parseHouseholdFinanceReceiptRecord(
+          JSON.parse(
+            seeded.store.getLatestInternal(receiptId)!.payload
+              .desiredCanonicalJson,
+          ),
+        );
+        if (record.status !== 'active') {
+          throw new Error('Expected an active synthetic receipt');
+        }
+        return parseHouseholdFinanceReceiptRecord({
+          ...record,
+          updatedAt: '2026-07-29T12:10:01.000Z',
+          extraction: {
+            ...record.extraction,
+            extractedAt: '2026-07-29T12:10:01.000Z',
+          },
+        });
+      } finally {
+        seeded.authenticator.destroy();
+        seeded.store.close();
+      }
+    })();
+    const { authenticator, projection, store, workflow } = setup(
+      [shadow],
+      '2026-07-29T12:30:00.000Z',
+    );
+    try {
+      expect(workflow.replaceActualCanonicalRecords([legacy])).toBe(1);
+      expect(workflow.runOnce()).toMatchObject({
+        unsettled: 0,
+        published: 0,
+        waitingForActual: 0,
+        visible: 1,
+      });
+      expect(store.getLatestInternal(receiptId)).toBeUndefined();
+      expect(projection.listActiveRecords()).toMatchObject([
+        {
+          receiptId,
+          revision: 1,
+          extraction: { extractedAt: '2026-07-29T12:10:01.000Z' },
         },
       ]);
     } finally {

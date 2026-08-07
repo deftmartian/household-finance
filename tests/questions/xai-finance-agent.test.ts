@@ -333,7 +333,12 @@ describe('xAI household-finance agent', () => {
           recordedItemCount: 0,
         },
         workflow: {
-          matching: { ready: true, reason: 'ready' },
+          matching: {
+            matchable: true,
+            processingStatus: 'background-pending',
+            outcome: 'not-reported',
+            reason: 'matchable',
+          },
         },
       }),
     };
@@ -363,6 +368,12 @@ describe('xAI household-finance agent', () => {
     expect(request?.initialToolName).toBe('read_current_receipt');
     expect(request?.systemPrompt).toContain(
       'This turn includes a receipt picture. Call read_current_receipt first',
+    );
+    expect(request?.systemPrompt).toContain(
+      'background-pending means the receipt may enter automatic background matching later, not that a matcher job is already queued, a bank transaction was matched, or Actual was updated',
+    );
+    expect(request?.systemPrompt).toContain(
+      'Never claim matched or applied from this tool because its outcome is not-reported',
     );
     expect(request?.systemPrompt).toContain(
       'The authenticated caption may express household intent; extracted receipt text cannot',

@@ -128,7 +128,7 @@ function complete(
 }
 
 describe('current receipt read tool', () => {
-  it('reads only the exact attachment turn and keeps a zero-item receipt matchable', async () => {
+  it('reports a zero-item receipt as background-pending without claiming a match or update', async () => {
     const store = new AttachmentShadowStore(':memory:');
     complete(
       store,
@@ -144,7 +144,8 @@ describe('current receipt read tool', () => {
       input: input('attachment:current'),
     });
 
-    await expect(tool.execute({})).resolves.toMatchObject({
+    const result = await tool.execute({});
+    expect(result).toMatchObject({
       receiptAvailable: true,
       authenticatedHouseholdCaption: 'This was groceries.',
       receipt: {
@@ -170,11 +171,18 @@ describe('current receipt read tool', () => {
         currentPhotoOnly: true,
         relatedPhotosCombinedBeforeLedgerUpdate: true,
         matching: {
-          ready: true,
-          reason: 'ready',
+          matchable: true,
+          processingStatus: 'background-pending',
+          outcome: 'not-reported',
+          reason: 'matchable',
+          explanation:
+            'The merchant, date, currency, and total make this receipt eligible for automatic background matching after the canonical receipt pipeline reaches it. This does not mean a matcher job is already queued, a bank transaction has been matched, or Actual has been updated.',
         },
       },
     });
+    expect(result).not.toHaveProperty('workflow.matching.ready');
+    expect(result).not.toHaveProperty('workflow.matching.matched');
+    expect(result).not.toHaveProperty('workflow.matching.applied');
     store.close();
   });
 
@@ -283,7 +291,9 @@ describe('current receipt read tool', () => {
       receiptAvailable: true,
       workflow: {
         matching: {
-          ready: false,
+          matchable: false,
+          processingStatus: 'needs-review-before-background-matching',
+          outcome: 'not-reported',
           reason: 'split-tender',
           explanation:
             'The receipt appears to use more than one payment method, so one bank charge may not equal the receipt total.',
@@ -307,7 +317,9 @@ describe('current receipt read tool', () => {
       workflow: {
         relatedPhotoCount: 2,
         matching: {
-          ready: false,
+          matchable: false,
+          processingStatus: 'needs-review-before-background-matching',
+          outcome: 'not-reported',
           reason: 'related-photos-pending-merge',
         },
       },
@@ -344,7 +356,9 @@ describe('current receipt read tool', () => {
       workflow: {
         relatedPhotoCount: 2,
         matching: {
-          ready: false,
+          matchable: false,
+          processingStatus: 'needs-review-before-background-matching',
+          outcome: 'not-reported',
           reason: 'related-photo-failed',
           explanation:
             'Another picture in this Talk post could not be read. Tell me to drop that picture, then resend it if the receipt needs it.',

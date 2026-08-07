@@ -652,6 +652,21 @@ describe('bundleReceiptPhotos', () => {
     expect(revised.householdNotes?.map((note) => note.text)).toEqual([
       "Elia's birthday present.",
     ]);
+    expect(revised.updatedAt).toBe(resend.extractedAt);
+    expect(revised.extraction.extractedAt).toBe(
+      previous.extraction.extractedAt,
+    );
+    expect(revised).toMatchObject({
+      merchant: previous.merchant,
+      purchaseDate: previous.purchaseDate,
+      currency: previous.currency,
+      amounts: previous.amounts,
+      paymentEvidence: previous.paymentEvidence,
+      items: previous.items,
+      extraction: {
+        sourceSha256s: previous.extraction.sourceSha256s,
+      },
+    });
   });
 
   it('uses extraction order when a newer photo arrived before the prior revision finished', () => {

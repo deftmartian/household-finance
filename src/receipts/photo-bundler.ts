@@ -524,7 +524,22 @@ export function buildActiveReceiptRecord(
       instant(right.extractedAt) - instant(left.extractedAt) ||
       right.eventId.localeCompare(left.eventId),
   )[0]!;
-  const extractedAt = bundle.updatedAt;
+  const sourceSha256s = bundle.sources.map((source) => source.sourceSha256);
+  const sourceSequenceUnchanged =
+    previous !== undefined &&
+    previous.extraction.sourceSha256s.length === sourceSha256s.length &&
+    sourceSha256s.every(
+      (sourceSha256, index) =>
+        previous.extraction.sourceSha256s[index] === sourceSha256,
+    );
+  // Bundle updatedAt includes every observation so a later caption on an exact
+  // reupload can still revise the household notes. Extraction provenance comes
+  // from the content-deduplicated sources. Preserve existing provenance for an
+  // unchanged source sequence so the first scan after this fix cannot rewrite a
+  // legacy canonical record whose duplicate observation used the later time.
+  const extractedAt = sourceSequenceUnchanged
+    ? previous.extraction.extractedAt
+    : latestExtraction.extractedAt;
   const updatedAt = new Date(
     Math.max(
       instant(bundle.updatedAt),
@@ -655,7 +670,7 @@ export function buildActiveReceiptRecord(
         ? { automaticProcessingBlocked: true }
         : {}),
       ...(itemSplitBlocked ? { itemSplitBlocked: true } : {}),
-      sourceSha256s: bundle.sources.map((source) => source.sourceSha256),
+      sourceSha256s,
     },
   });
 }

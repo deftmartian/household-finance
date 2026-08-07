@@ -56,6 +56,57 @@ describe('ReceiptPipelineReconciler', () => {
     }
   });
 
+  it('turns one exact weak-merchant charge into a confirmation prompt', async () => {
+    const matches = new ReceiptMatchStore(':memory:');
+    try {
+      const receiptId = '77777777-7777-4777-8777-777777777777';
+      recordReceipt(matches, receiptId);
+      const reconciler = new ReceiptPipelineReconciler({
+        matches,
+        candidates: {
+          candidatesForReceipt: async () => [
+            {
+              transactionId: 'transaction-confirm-merchant',
+              importedId: 'import-confirm-merchant',
+              accountAlias: 'active-mastercard',
+              accountLastFour: null,
+              postingDate: '2026-07-28',
+              payeeName: 'Different Merchant',
+              currency: 'CAD',
+              amountMinorUnits: -1_725,
+              alreadyLinkedReceipts: [],
+            },
+          ],
+        },
+        now: () => new Date(receivedAt),
+      });
+
+      await reconciler.kick();
+
+      expect(matches.getReceipt(receiptId)).toMatchObject({
+        receiptId,
+        status: 'ambiguous',
+      });
+      expect(matches.getImportedTransactionLinks(receiptId)).toEqual([]);
+      expect(matches.listUnpromptedAmbiguities()).toMatchObject([
+        {
+          receipt: { receiptId, status: 'ambiguous' },
+          choices: [
+            {
+              payeeName: 'Different Merchant',
+              amountMinorUnits: -1_725,
+            },
+          ],
+        },
+      ]);
+      expect(
+        matches.listAudit(receiptId).map((event) => event.action),
+      ).toContain('receipt-match.ambiguous');
+    } finally {
+      matches.close();
+    }
+  });
+
   it('retries a transient SimpleFIN candidate read and matches without a restart', async () => {
     const matches = new ReceiptMatchStore(':memory:');
     try {
