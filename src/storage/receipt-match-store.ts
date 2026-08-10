@@ -485,6 +485,9 @@ const receiptMatchSchema = `
     occurred_at TEXT NOT NULL
   ) STRICT;
 
+  CREATE INDEX IF NOT EXISTS receipt_match_audit_receipt_action
+    ON receipt_match_audit_events(receipt_id, action);
+
   CREATE TABLE IF NOT EXISTS receipt_match_ignores (
     receipt_id TEXT PRIMARY KEY,
     actor_id TEXT NOT NULL,

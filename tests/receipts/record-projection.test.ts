@@ -1222,6 +1222,7 @@ describe('ReceiptRecordPublicationWorkflow', () => {
     try {
       expect(workflow.runOnce()).toMatchObject({
         unsettled: 1,
+        nextSettlementAt: null,
         published: 1,
         visible: 0,
       });
@@ -1233,12 +1234,14 @@ describe('ReceiptRecordPublicationWorkflow', () => {
       markLatestApplied(store, '2026-07-29T12:16:01.000Z');
       expect(workflow.runOnce()).toMatchObject({
         unsettled: 1,
+        nextSettlementAt: '2026-07-29T12:30:30.000Z',
         published: 0,
         visible: 0,
       });
       now = new Date('2026-07-29T12:31:00.000Z');
       expect(workflow.runOnce()).toMatchObject({
         unsettled: 0,
+        nextSettlementAt: null,
         published: 0,
         visible: 1,
       });

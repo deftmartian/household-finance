@@ -68,6 +68,7 @@ import { XaiFinanceQuestionAgent } from './questions/xai-finance-agent.js';
 import {
   CanonicalReceiptRecordHydrator,
   CanonicalReceiptRecordProjectionSource,
+  ReceiptRecordPublicationWorker,
   ReceiptRecordPublicationWorkflow,
 } from './receipts/record-projection.js';
 import { ReceiptRecordPublisher } from './receipts/publication.js';
@@ -358,6 +359,15 @@ export function createProductionRuntime(
         projection: receiptRecordProjection,
         roomToken: config.householdFinanceRoomToken,
       });
+    const receiptRecordPublicationWorker = new ReceiptRecordPublicationWorker({
+      workflow: receiptRecordPublicationWorkflow,
+      changeToken: () =>
+        [
+          attachmentStore.getDatabaseChangeToken(),
+          receiptNoteOutboxStore.getDatabaseChangeToken(),
+          receiptRecordPublicationWorkflow.getActualRecordsChangeToken(),
+        ].join(':'),
+    });
     const receiptRecordHydrator = new CanonicalReceiptRecordHydrator({
       actual: deterministicActualReader,
       publication: receiptRecordPublicationWorkflow,
@@ -643,7 +653,7 @@ export function createProductionRuntime(
       },
       {
         name: 'receipt-record-publication',
-        kick: () => receiptRecordPublicationWorkflow.runOnce(),
+        kick: () => receiptRecordPublicationWorker.kick(),
       },
       {
         name: 'receipt-categorization',
@@ -680,7 +690,7 @@ export function createProductionRuntime(
       },
       {
         name: 'receipt-record-publication',
-        kick: () => receiptRecordPublicationWorkflow.runOnce(),
+        kick: () => receiptRecordPublicationWorker.kick(),
       },
       {
         name: 'receipt-categorization',

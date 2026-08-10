@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { createAttachmentTalkReplyReferenceId } from '../domain/idempotency.js';
 import type { ReceiptModelRunMetadata } from '../model/index.js';
 import type { TalkAttachmentReference, TalkReply } from '../talk/index.js';
+import { SqliteChangeTokenReader } from './sqlite-change-token.js';
 
 export type AttachmentShadowStatus =
   'received' | 'preserved' | 'completed' | 'failed';
@@ -338,6 +339,7 @@ function toShadowItem(row: AttachmentShadowRow): AttachmentShadowItem {
  */
 export class AttachmentShadowStore {
   readonly #database: Database.Database;
+  readonly #changeToken: SqliteChangeTokenReader;
 
   constructor(databasePath: string) {
     if (databasePath !== ':memory:') {
@@ -345,10 +347,15 @@ export class AttachmentShadowStore {
     }
     this.#database = new Database(databasePath);
     this.#database.exec(attachmentSchema);
+    this.#changeToken = new SqliteChangeTokenReader(this.#database);
   }
 
   close(): void {
     this.#database.close();
+  }
+
+  getDatabaseChangeToken(): string {
+    return this.#changeToken.read();
   }
 
   recordInbound(input: AttachmentInboundEventInput): {

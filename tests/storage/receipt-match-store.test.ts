@@ -108,6 +108,27 @@ function matchReceipt(
 }
 
 describe('ReceiptMatchStore intake and scheduling', () => {
+  it('indexes the terminal Talk outcome anti-join', () => {
+    const path = databasePath();
+    const store = new ReceiptMatchStore(path);
+    const observer = new Database(path, { readonly: true });
+    try {
+      expect(
+        observer
+          .prepare(
+            `SELECT name
+               FROM sqlite_master
+              WHERE type = 'index'
+                AND name = 'receipt_match_audit_receipt_action'`,
+          )
+          .get(),
+      ).toEqual({ name: 'receipt_match_audit_receipt_action' });
+    } finally {
+      observer.close();
+      store.close();
+    }
+  });
+
   it('records one awaiting lifecycle and one due match job idempotently', () => {
     const store = new ReceiptMatchStore(':memory:');
 

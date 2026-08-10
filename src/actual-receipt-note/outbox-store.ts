@@ -14,6 +14,7 @@ import {
   type ReceiptNoteUpsertPayloadV1,
 } from './payload.js';
 import { actualReceiptNoteId } from '../receipt-record/index.js';
+import { SqliteChangeTokenReader } from '../storage/sqlite-change-token.js';
 import type { ReceiptNoteUpsertResult } from './writer.js';
 
 const canonicalInstantSchema = z.string().refine((value) => {
@@ -280,6 +281,7 @@ function resultJson(result: ReceiptNoteUpsertResult): string {
 
 export class ReceiptNoteOutboxStore {
   readonly #database: Database.Database;
+  readonly #changeToken: SqliteChangeTokenReader;
   readonly #leaseDurationMs: number;
   readonly #retryDelaysMs: readonly number[];
 
@@ -315,10 +317,15 @@ export class ReceiptNoteOutboxStore {
     this.#retryDelaysMs = [...retryDelaysMs];
     this.#database = new Database(databasePath);
     this.#database.exec(receiptNoteOutboxSchema);
+    this.#changeToken = new SqliteChangeTokenReader(this.#database);
   }
 
   close(): void {
     this.#database.close();
+  }
+
+  getDatabaseChangeToken(): string {
+    return this.#changeToken.read();
   }
 
   enqueueSealed(envelopeInput: SealedReceiptNoteEnvelopeV1): {

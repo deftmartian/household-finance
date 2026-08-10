@@ -206,9 +206,16 @@ export interface ReceiptRecordPublicationRunResult {
   readonly bundles: number;
   readonly invalid: number;
   readonly unsettled: number;
+  readonly nextSettlementAt: string | null;
   readonly published: number;
   readonly waitingForActual: number;
   readonly visible: number;
+}
+
+export interface ReceiptRecordPublicationWorkerOptions {
+  readonly workflow: Pick<ReceiptRecordPublicationWorkflow, 'runOnce'>;
+  readonly changeToken: () => string;
+  readonly now?: () => Date;
 }
 
 export interface CanonicalReceiptSourceReference {
@@ -294,6 +301,8 @@ export class ReceiptRecordPublicationWorkflow {
   readonly #settleMs: number;
   readonly #now: () => Date;
   #actualRecords: readonly HouseholdFinanceReceiptRecordV1[] = [];
+  #actualRecordsChangeVersion = 0;
+  #nextSettlementAt: string | null = null;
 
   constructor(options: ReceiptRecordPublicationWorkflowOptions) {
     this.#attachments = options.attachments;
@@ -435,6 +444,7 @@ export class ReceiptRecordPublicationWorkflow {
       bundles: bundles.length,
       invalid,
       unsettled,
+      nextSettlementAt: this.#nextSettlementAt,
       published,
       waitingForActual,
       visible,
@@ -448,7 +458,12 @@ export class ReceiptRecordPublicationWorkflow {
       recordsInput,
       MAX_HOUSEHOLD_FINANCE_RECEIPT_RECORDS,
     );
+    this.#actualRecordsChangeVersion += 1;
     return this.#refreshProjection();
+  }
+
+  getActualRecordsChangeToken(): string {
+    return String(this.#actualRecordsChangeVersion);
   }
 
   resolveCanonicalReceiptId(
@@ -747,12 +762,26 @@ export class ReceiptRecordPublicationWorkflow {
     if (!(now instanceof Date) || Number.isNaN(now.valueOf())) {
       throw new TypeError('Receipt publication clock returned an invalid Date');
     }
-    const settled = this.#projectableCanonicalRecords().filter(
-      (record) =>
-        record.status === 'discarded' ||
-        now.valueOf() - Date.parse(record.extraction.extractedAt) >=
-          this.#settleMs,
-    );
+    let nextSettlementTime: number | undefined;
+    const settled = this.#projectableCanonicalRecords().filter((record) => {
+      if (record.status === 'discarded') {
+        return true;
+      }
+      const settlementTime =
+        Date.parse(record.extraction.extractedAt) + this.#settleMs;
+      if (now.valueOf() >= settlementTime) {
+        return true;
+      }
+      nextSettlementTime = Math.min(
+        nextSettlementTime ?? settlementTime,
+        settlementTime,
+      );
+      return false;
+    });
+    this.#nextSettlementAt =
+      nextSettlementTime === undefined
+        ? null
+        : new Date(nextSettlementTime).toISOString();
     this.#projection.replaceCanonicalState(
       this.#mergedCanonicalRecords(),
       settled,
@@ -802,6 +831,60 @@ export class ReceiptRecordPublicationWorkflow {
       projectable,
       MAX_HOUSEHOLD_FINANCE_RECEIPT_RECORDS,
     );
+  }
+}
+
+/**
+ * Keeps the one-second orchestration cadence without rebuilding an unchanged
+ * receipt projection on every tick. The workflow still runs initially, after
+ * any durable input change, and exactly when its next settlement gate opens.
+ */
+export class ReceiptRecordPublicationWorker {
+  readonly #workflow: ReceiptRecordPublicationWorkerOptions['workflow'];
+  readonly #changeToken: () => string;
+  readonly #now: () => Date;
+  #lastSuccessfulInputToken: string | undefined;
+  #lastResult: ReceiptRecordPublicationRunResult | undefined;
+  #lastRunAt: number | undefined;
+
+  constructor(options: ReceiptRecordPublicationWorkerOptions) {
+    this.#workflow = options.workflow;
+    this.#changeToken = options.changeToken;
+    this.#now = options.now ?? (() => new Date());
+  }
+
+  kick(): ReceiptRecordPublicationRunResult {
+    const now = this.#now();
+    if (!(now instanceof Date) || Number.isNaN(now.valueOf())) {
+      throw new TypeError(
+        'Receipt publication worker clock returned an invalid Date',
+      );
+    }
+    const inputToken = this.#changeToken();
+    if (typeof inputToken !== 'string' || inputToken.length === 0) {
+      throw new TypeError('Receipt publication change token is invalid');
+    }
+    const nextSettlementTime =
+      this.#lastResult?.nextSettlementAt === null ||
+      this.#lastResult?.nextSettlementAt === undefined
+        ? undefined
+        : Date.parse(this.#lastResult.nextSettlementAt);
+    const clockMovedBack =
+      this.#lastRunAt !== undefined && now.valueOf() < this.#lastRunAt;
+    if (
+      !clockMovedBack &&
+      this.#lastResult !== undefined &&
+      inputToken === this.#lastSuccessfulInputToken &&
+      (nextSettlementTime === undefined || now.valueOf() < nextSettlementTime)
+    ) {
+      return this.#lastResult;
+    }
+
+    const result = this.#workflow.runOnce();
+    this.#lastSuccessfulInputToken = inputToken;
+    this.#lastResult = result;
+    this.#lastRunAt = now.valueOf();
+    return result;
   }
 }
 
