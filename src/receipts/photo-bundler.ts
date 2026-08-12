@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  assessReceiptModelProposal,
   receiptModelProposalV1Schema,
   type ReceiptModelRunMetadata,
   type ReceiptModelProposalV1,
@@ -319,6 +320,104 @@ function paymentScore(
   );
 }
 
+type ReceiptUncertaintyCode =
+  ReceiptModelProposalV1['uncertainties'][number]['code'];
+
+function hasMaterialUncertainty(
+  proposal: ReceiptModelProposalV1,
+  code: ReceiptUncertaintyCode,
+): boolean {
+  return proposal.uncertainties.some(
+    (uncertainty) => uncertainty.material && uncertainty.code === code,
+  );
+}
+
+function isStrongEvidence(
+  evidence: Parameters<typeof evidenceRank>[0],
+): boolean {
+  return evidence === 'explicit' || evidence === 'derived';
+}
+
+function isPageLocalMaterialUncertainty(
+  proposals: readonly ReceiptModelProposalV1[],
+  code: ReceiptUncertaintyCode,
+): boolean {
+  return (
+    proposals.some((proposal) => hasMaterialUncertainty(proposal, code)) &&
+    proposals.some((proposal) => !hasMaterialUncertainty(proposal, code))
+  );
+}
+
+function reconcileMergedUncertainties(
+  proposals: readonly ReceiptModelProposalV1[],
+  merged: ReceiptModelProposalV1,
+): ReceiptModelProposalV1['uncertainties'] {
+  if (proposals.length < 2) {
+    return merged.uncertainties;
+  }
+
+  // Validate the same purchased-item view that will be published. Costco TPD
+  // rows describe discounts rather than purchases and are intentionally
+  // removed before item allocation.
+  const assessment = assessReceiptModelProposal({
+    ...merged,
+    lineItems: purchasedLineItems(merged),
+  });
+  const resolvedCodes = new Set<ReceiptUncertaintyCode>();
+
+  const dateSuppliedByClearPage = proposals.some(
+    (proposal) =>
+      !hasMaterialUncertainty(proposal, 'date-unclear') &&
+      proposal.purchaseDate.value === merged.purchaseDate.value &&
+      isStrongEvidence(proposal.purchaseDate.evidence),
+  );
+  if (
+    isPageLocalMaterialUncertainty(proposals, 'date-unclear') &&
+    merged.purchaseDate.value !== null &&
+    isStrongEvidence(merged.purchaseDate.evidence) &&
+    dateSuppliedByClearPage
+  ) {
+    resolvedCodes.add('date-unclear');
+  }
+
+  const totalSuppliedByClearPage = proposals.some(
+    (proposal) =>
+      !hasMaterialUncertainty(proposal, 'amounts-unclear') &&
+      proposal.amounts.total.valueMinor === merged.amounts.total.valueMinor &&
+      isStrongEvidence(proposal.amounts.total.evidence),
+  );
+  if (
+    isPageLocalMaterialUncertainty(proposals, 'amounts-unclear') &&
+    assessment.arithmeticChecked &&
+    assessment.arithmeticCorrect &&
+    totalSuppliedByClearPage
+  ) {
+    resolvedCodes.add('amounts-unclear');
+  }
+
+  const lineItemsSupportedByClearPage = proposals.some(
+    (proposal) =>
+      !hasMaterialUncertainty(proposal, 'line-items-unclear') &&
+      proposal.lineItems.length > 0,
+  );
+  if (
+    isPageLocalMaterialUncertainty(proposals, 'line-items-unclear') &&
+    !assessment.issueCodes.includes('line-items-incomplete') &&
+    !assessment.issueCodes.includes('line-items-mismatch') &&
+    lineItemsSupportedByClearPage
+  ) {
+    resolvedCodes.add('line-items-unclear');
+  }
+
+  // Only remove material warnings that were local to one partial page and are
+  // disproved by the completed bundle. Advisory warnings and every other risk
+  // remain part of the merged extraction provenance.
+  return merged.uncertainties.filter(
+    (uncertainty) =>
+      !uncertainty.material || !resolvedCodes.has(uncertainty.code),
+  );
+}
+
 function mergeReceipts(
   sources: readonly ReceiptPhotoCandidate[],
 ): ReceiptModelProposalV1 {
@@ -363,7 +462,7 @@ function mergeReceipts(
     .map((proposal) => proposal.paymentEvidence)
     .sort((left, right) => paymentScore(right) - paymentScore(left));
 
-  return receiptModelProposalV1Schema.parse({
+  const merged = receiptModelProposalV1Schema.parse({
     schemaVersion: 'receipt-model-proposal.v1',
     documentDisposition: proposals.some(
       (proposal) => proposal.documentDisposition === 'single-receipt',
@@ -394,6 +493,10 @@ function mergeReceipts(
     ),
     lineItems: [...lines.values()].flat().slice(0, 200),
     uncertainties: [...uncertainties.values()].slice(0, 100),
+  });
+  return receiptModelProposalV1Schema.parse({
+    ...merged,
+    uncertainties: reconcileMergedUncertainties(proposals, merged),
   });
 }
 

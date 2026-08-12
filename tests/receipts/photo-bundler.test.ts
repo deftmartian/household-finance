@@ -96,6 +96,13 @@ function candidate(
   };
 }
 
+function materialUncertainty(
+  code: ReceiptModelProposalV1['uncertainties'][number]['code'],
+  message = 'Synthetic page-local uncertainty',
+): ReceiptModelProposalV1['uncertainties'][number] {
+  return { code, message, material: true, sourcePage: 1 };
+}
+
 describe('bundleReceiptPhotos', () => {
   it('merges overlapping photos and retains the most complete facts', () => {
     const bundles = bundleReceiptPhotos([
@@ -128,6 +135,147 @@ describe('bundleReceiptPhotos', () => {
     expect(bundles[0]?.sources).toHaveLength(2);
     expect(bundles[0]?.receipt.purchaseDate.value).toBe('2026-07-12');
     expect(bundles[0]?.receipt.lineItems).toHaveLength(2);
+  });
+
+  it('reconciles stale page-local warnings after a complete multi-photo merge', () => {
+    const top = proposal({
+      merchant: 'Costco Wholesale',
+      items: [
+        ['Milk', 6_00],
+        ['Bread', 4_00],
+        ['Eggs', 5_00],
+      ],
+    });
+    top.amounts = {
+      subtotal: amount(null),
+      tax: amount(null),
+      discount: amount(null),
+      tip: amount(null),
+      total: amount(null),
+    };
+    top.uncertainties = [
+      materialUncertainty('date-unclear'),
+      materialUncertainty('amounts-unclear'),
+    ];
+
+    const bottom = proposal({
+      date: '2026-08-12',
+      total: 17_25,
+      items: [
+        ['Bread', 4_00],
+        ['Eggs', 5_00],
+        ['Dish soap', 3_00],
+        ['123456 TPD/DISH SOAP', 3_00],
+      ],
+    });
+    bottom.amounts = {
+      subtotal: amount(15_00),
+      tax: amount(2_25),
+      discount: amount(3_00),
+      tip: amount(0),
+      total: amount(17_25),
+    };
+    bottom.uncertainties = [
+      materialUncertainty('merchant-unclear'),
+      materialUncertainty('line-items-unclear'),
+    ];
+
+    const bundle = bundleReceiptPhotos([
+      candidate(1, top, '2026-08-12T20:00:00.000Z'),
+      candidate(2, bottom, '2026-08-12T20:00:10.000Z'),
+    ])[0]!;
+    const record = buildActiveReceiptRecord(bundle);
+
+    expect(bundle.sources).toHaveLength(2);
+    expect(bundle.receipt.uncertainties).toEqual([
+      materialUncertainty('merchant-unclear'),
+    ]);
+    expect(record.extraction).not.toHaveProperty('automaticProcessingBlocked');
+    expect(record.extraction).not.toHaveProperty('itemSplitBlocked');
+    expect(receiptRecordItemDetailsComplete(record)).toBe(true);
+  });
+
+  it('retains page-local warnings when the merged facts do not reconcile', () => {
+    const top = proposal({
+      merchant: 'Costco Wholesale',
+      items: [
+        ['Milk', 6_00],
+        ['Bread', 4_00],
+      ],
+    });
+    top.amounts = {
+      subtotal: amount(10_00),
+      tax: amount(1_50),
+      discount: amount(0),
+      tip: amount(0),
+      total: amount(null),
+    };
+    top.uncertainties = [materialUncertainty('amounts-unclear')];
+
+    const bottom = proposal({
+      date: '2026-08-12',
+      total: 12_00,
+      items: [
+        ['Milk', 6_00],
+        ['Bread', 4_00],
+        ['Unreadable item', 1_00],
+      ],
+    });
+    bottom.amounts = {
+      subtotal: amount(10_00),
+      tax: amount(1_50),
+      discount: amount(0),
+      tip: amount(0),
+      total: amount(12_00),
+    };
+    bottom.uncertainties = [materialUncertainty('line-items-unclear')];
+
+    const bundle = bundleReceiptPhotos([
+      candidate(1, top, '2026-08-12T20:00:00.000Z'),
+      candidate(2, bottom, '2026-08-12T20:00:10.000Z'),
+    ])[0]!;
+    const record = buildActiveReceiptRecord(bundle);
+
+    expect(bundle.receipt.uncertainties.map(({ code }) => code)).toEqual([
+      'amounts-unclear',
+      'line-items-unclear',
+    ]);
+    expect(record.extraction).toMatchObject({
+      automaticProcessingBlocked: true,
+      itemSplitBlocked: true,
+    });
+  });
+
+  it('does not override a material warning reported by every source page', () => {
+    const warned = proposal({
+      merchant: 'Costco Wholesale',
+      date: '2026-08-12',
+      total: 11_50,
+      items: [
+        ['Milk', 6_00],
+        ['Bread', 4_00],
+      ],
+    });
+    warned.amounts = {
+      subtotal: amount(10_00),
+      tax: amount(1_50),
+      discount: amount(0),
+      tip: amount(0),
+      total: amount(11_50),
+    };
+    warned.uncertainties = [materialUncertainty('amounts-unclear')];
+
+    const bundle = bundleReceiptPhotos([
+      candidate(1, warned, '2026-08-12T20:00:00.000Z'),
+      candidate(2, warned, '2026-08-12T20:00:10.000Z'),
+    ])[0]!;
+
+    expect(bundle.receipt.uncertainties).toEqual([
+      materialUncertainty('amounts-unclear'),
+    ]);
+    expect(buildActiveReceiptRecord(bundle).extraction).toMatchObject({
+      automaticProcessingBlocked: true,
+    });
   });
 
   it('does not merge distinct same-merchant receipts with different totals', () => {
