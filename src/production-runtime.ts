@@ -613,6 +613,7 @@ export function createProductionRuntime(
           apiKey: config.model.apiKey,
           model: config.model.name,
           reasoningEffort: config.model.reasoningEffort,
+          timeZone: config.questionAnswering.timeZone,
           maxAttempts: 2,
         }),
         talk,

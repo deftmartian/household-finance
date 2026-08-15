@@ -329,6 +329,29 @@ describe('xAI Responses receipt adapter', () => {
     expect(document).not.toContain('tools');
   });
 
+  it('supplies the current household date for numeric receipt date disambiguation', async () => {
+    const calls: RequestInit[] = [];
+    const fetchImplementation: typeof fetch = async (_url, init) => {
+      calls.push(init ?? {});
+      return calls.length === 1
+        ? validPreflightResponse()
+        : validDocumentResponse();
+    };
+    const now = Date.parse('2026-08-16T02:30:00.000Z');
+
+    await adapterWith(fetchImplementation, {
+      now: () => now,
+      timeZone: 'America/Halifax',
+    }).extract(tinyDocument());
+
+    const preflight = String(calls[0]?.body);
+    const document = String(calls[1]?.body);
+    expect(preflight).not.toContain('2026-08-15');
+    expect(document).toContain('current household calendar date is 2026-08-15');
+    expect(document).toContain('which two-digit component is the year');
+    expect(document).toContain('material date-unclear uncertainty');
+  });
+
   it('snapshots validated bytes before awaiting the preflight', async () => {
     const document = tinyDocument();
     const firstPage = document.pages[0];
