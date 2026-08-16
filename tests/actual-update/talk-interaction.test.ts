@@ -13,6 +13,7 @@ import {
   renderActualUpdateAutoOutcomeMessage,
 } from '../../src/actual-update/talk-interaction.js';
 import type {
+  ActualUpdateConversationalOrigin,
   ActualUpdateOperationalStatus,
   ActualUpdatePublicIntent,
 } from '../../src/storage/actual-update-store.js';
@@ -59,6 +60,8 @@ function publicIntent(
 
 class FakeIntentSource {
   readonly intents = new Map<string, ActualUpdatePublicIntent>();
+  readonly origins = new Map<string, ActualUpdateConversationalOrigin>();
+  readonly exhausted = new Set<string>();
 
   constructor(intent: ActualUpdatePublicIntent) {
     this.intents.set(intent.proposal.intentId, intent);
@@ -66,6 +69,16 @@ class FakeIntentSource {
 
   getPublicIntent(intentId: string): ActualUpdatePublicIntent | undefined {
     return this.intents.get(intentId);
+  }
+
+  getConversationalOrigin(
+    intentId: string,
+  ): ActualUpdateConversationalOrigin | undefined {
+    return this.origins.get(intentId);
+  }
+
+  isApplyReconciliationExhausted(intentId: string): boolean {
+    return this.exhausted.has(intentId);
   }
 
   listPublicIntentsByStatus(
@@ -251,6 +264,211 @@ describe('Actual update Talk interaction', () => {
     await expect(outcomeWorker.reconcileAvailable()).resolves.toEqual({
       steps: [],
     });
+    store.close();
+  });
+
+  it('threads automatic progress and its terminal outcome to the source message', async () => {
+    const store = new ActualUpdateTalkStore(':memory:');
+    const intent = publicIntent();
+    const source = new FakeIntentSource(intent);
+    source.origins.set('intent-1', {
+      intentId: 'intent-1',
+      questionEventId: '11111111-1111-4111-8111-111111111111',
+      backendUrl,
+      roomToken,
+      actorId: 'alex',
+      sourceMessageId: '42',
+      receivedAt: instant,
+    });
+    const approve = vi.fn(() => ({ outcome: 'recorded' as const, intent }));
+    const send = talkSender();
+    let clock = new Date(instant);
+    const interaction = worker({
+      store,
+      source,
+      approve,
+      send,
+      autoApprovalEnabled: true,
+      now: () => clock,
+    });
+
+    await interaction.reconcileAvailable();
+    expect(store.hasPendingFirstResponse(roomToken)).toBe(true);
+    source.intents.set('intent-1', { ...intent, status: 'queued' });
+    clock = new Date(Date.parse(instant) + 4_000);
+    await interaction.reconcileAvailable();
+    expect(send).not.toHaveBeenCalled();
+
+    clock = new Date(Date.parse(instant) + 5_000);
+    await expect(interaction.reconcileAvailable()).resolves.toMatchObject({
+      steps: [{ status: 'progress-delivered' }],
+    });
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({ replyTo: '42' }),
+    );
+    expect(store.hasPendingFirstResponse(roomToken)).toBe(false);
+
+    source.intents.set('intent-1', {
+      ...intent,
+      status: 'applied',
+      applyOutcome: { status: 'updated', completedAt: later },
+      updatedAt: later,
+    });
+    clock = new Date(later);
+    await expect(interaction.reconcileAvailable()).resolves.toMatchObject({
+      steps: [{ status: 'outcome-delivered' }],
+    });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({ replyTo: '42' }),
+    );
+    store.close();
+  });
+
+  it('threads manual approval to the source but keeps its outcome under that prompt', async () => {
+    const store = new ActualUpdateTalkStore(':memory:');
+    const intent = publicIntent();
+    const source = new FakeIntentSource(intent);
+    source.origins.set('intent-1', {
+      intentId: 'intent-1',
+      questionEventId: '11111111-1111-4111-8111-111111111111',
+      backendUrl,
+      roomToken,
+      actorId: 'alex',
+      sourceMessageId: '42',
+      receivedAt: instant,
+    });
+    const approve = vi.fn(() => ({ outcome: 'recorded' as const, intent }));
+    const send = talkSender();
+    const interaction = worker({
+      store,
+      source,
+      approve,
+      send,
+      autoApprovalEnabled: false,
+    });
+
+    await interaction.reconcileAvailable();
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({ replyTo: '42' }),
+    );
+    const approvalParent = store.getDelivery('intent-1')!.botMessageId!;
+    source.intents.set('intent-1', {
+      ...intent,
+      status: 'applied',
+      applyOutcome: { status: 'updated', completedAt: later },
+      updatedAt: later,
+    });
+    await worker({
+      store,
+      source,
+      approve,
+      send,
+      autoApprovalEnabled: false,
+      now: () => new Date(later),
+    }).reconcileAvailable();
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({ replyTo: approvalParent }),
+    );
+    store.close();
+  });
+
+  it('reports an unverifiable automatic outcome only after reconciliation is exhausted', async () => {
+    const store = new ActualUpdateTalkStore(':memory:');
+    const intent = publicIntent();
+    const source = new FakeIntentSource(intent);
+    source.origins.set('intent-1', {
+      intentId: 'intent-1',
+      questionEventId: '11111111-1111-4111-8111-111111111111',
+      backendUrl,
+      roomToken,
+      actorId: 'alex',
+      sourceMessageId: '42',
+      receivedAt: instant,
+    });
+    const approve = vi.fn(() => ({ outcome: 'recorded' as const, intent }));
+    const send = talkSender();
+    const interaction = worker({
+      store,
+      source,
+      approve,
+      send,
+      autoApprovalEnabled: true,
+      now: () => new Date(instant),
+    });
+    await interaction.reconcileAvailable();
+    source.intents.set('intent-1', {
+      ...intent,
+      status: 'ambiguous',
+      updatedAt: later,
+    });
+
+    await interaction.reconcileAvailable();
+    expect(send).not.toHaveBeenCalled();
+    source.exhausted.add('intent-1');
+    await worker({
+      store,
+      source,
+      approve,
+      send,
+      autoApprovalEnabled: true,
+      now: () => new Date(later),
+    }).reconcileAvailable();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyTo: '42',
+        message: expect.stringContaining("couldn't verify"),
+      }),
+    );
+    expect(store.getProgressDelivery('intent-1')?.state).toBe('suppressed');
+    store.close();
+  });
+
+  it('reports an exhausted manual ambiguity under its approval prompt', async () => {
+    const store = new ActualUpdateTalkStore(':memory:');
+    const intent = publicIntent();
+    const source = new FakeIntentSource(intent);
+    source.origins.set('intent-1', {
+      intentId: 'intent-1',
+      questionEventId: '11111111-1111-4111-8111-111111111111',
+      backendUrl,
+      roomToken,
+      actorId: 'alex',
+      sourceMessageId: '42',
+      receivedAt: instant,
+    });
+    const approve = vi.fn(() => ({ outcome: 'recorded' as const, intent }));
+    const send = talkSender();
+    await worker({
+      store,
+      source,
+      approve,
+      send,
+      autoApprovalEnabled: false,
+    }).reconcileAvailable();
+    const approvalParent = store.getDelivery('intent-1')!.botMessageId!;
+    source.intents.set('intent-1', {
+      ...intent,
+      status: 'ambiguous',
+      updatedAt: later,
+    });
+    source.exhausted.add('intent-1');
+
+    await worker({
+      store,
+      source,
+      approve,
+      send,
+      autoApprovalEnabled: false,
+      now: () => new Date(later),
+    }).reconcileAvailable();
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        replyTo: approvalParent,
+        message: expect.stringContaining("couldn't verify"),
+      }),
+    );
     store.close();
   });
 

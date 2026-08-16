@@ -141,6 +141,42 @@ describe('QuestionStore', () => {
     store.close();
   });
 
+  it('suppresses a delayed acknowledgement when the final reply is ready', () => {
+    const store = new QuestionStore(':memory:');
+    const event = store.recordInbound(input()).event;
+    expect(store.hasPendingFirstResponse('household-finance')).toBe(true);
+    store.completeQuestionAndEnqueueReply(
+      event.id,
+      {},
+      {},
+      {},
+      'Answer',
+      reply('Answer'),
+      'question-reply:final-first',
+      now,
+    );
+
+    expect(store.hasPendingFirstResponse('household-finance')).toBe(true);
+    const finalReply = store.claimNextOutbox(now);
+    expect(finalReply).toMatchObject({
+      kind: 'send-finance-question-talk-reply',
+      eventId: event.id,
+    });
+    store.completeTalkReplyOutbox(
+      finalReply!.id,
+      event.id,
+      'a'.repeat(64),
+      now,
+    );
+    expect(store.hasPendingFirstResponse('household-finance')).toBe(false);
+    expect(store.listAudit(event.id)).toContainEqual(
+      expect.objectContaining({
+        action: 'question.acknowledgement-suppressed',
+      }),
+    );
+    store.close();
+  });
+
   it('durably caps distinct state-changing calls while allowing exact replay', () => {
     const directory = mkdtempSync(join(tmpdir(), 'question-write-budget-'));
     const databasePath = join(directory, 'questions.sqlite');

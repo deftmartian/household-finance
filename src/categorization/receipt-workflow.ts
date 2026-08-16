@@ -141,6 +141,9 @@ export interface ReceiptCategorizationWorkflowOptions {
   readonly classifier: ReceiptItemCategoryClassifier;
   readonly publisher: ReadyReceiptCategorizationPublisher;
   readonly talk: ReceiptCategorizationTalkSender;
+  readonly interactiveActivity?: {
+    hasPendingFirstResponse(roomToken: string): boolean;
+  };
   readonly leaseDurationSeconds?: number;
   readonly now?: () => Date;
   readonly signal?: AbortSignal;
@@ -338,6 +341,8 @@ export class ReceiptCategorizationWorkflow {
   readonly #classifier: ReceiptItemCategoryClassifier;
   readonly #publisher: ReadyReceiptCategorizationPublisher;
   readonly #talk: ReceiptCategorizationTalkSender;
+  readonly #interactiveActivity:
+    ReceiptCategorizationWorkflowOptions['interactiveActivity'] | undefined;
   readonly #leaseDurationSeconds: number;
   readonly #now: () => Date;
   readonly #signal: AbortSignal | undefined;
@@ -351,6 +356,7 @@ export class ReceiptCategorizationWorkflow {
     this.#classifier = options.classifier;
     this.#publisher = options.publisher;
     this.#talk = options.talk;
+    this.#interactiveActivity = options.interactiveActivity;
     this.#leaseDurationSeconds = leaseDurationSeconds;
     this.#now = options.now ?? (() => new Date());
     this.#signal = options.signal;
@@ -646,6 +652,16 @@ export class ReceiptCategorizationWorkflow {
     const payload = talkPayloadSchema.parse(
       job.payload,
     ) as ReceiptCategorizationTalkPayload;
+    if (
+      this.#interactiveActivity?.hasPendingFirstResponse(payload.roomToken) ===
+      true
+    ) {
+      this.#store.deferTalkJobWithoutAttempt(
+        job.id,
+        new Date(this.#now().valueOf() + 1_000).toISOString(),
+      );
+      return;
+    }
     try {
       const item = this.#store.getItem(job.eventId);
       const delivered = await this.#talk.sendReplyWithIdentity({

@@ -32,6 +32,7 @@ describe('AttachmentShadowStore', () => {
     expect(first.inserted).toBe(true);
     expect(duplicate.inserted).toBe(false);
     expect(duplicate.event.id).toBe(first.event.id);
+    expect(store.hasPendingFirstResponse('finance-room')).toBe(true);
     expect(store.claimNextOutbox(now)).toMatchObject({
       kind: 'process-attachment-shadow',
       eventId: first.event.id,

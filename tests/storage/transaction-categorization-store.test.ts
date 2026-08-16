@@ -339,6 +339,35 @@ describe('TransactionCategorizationStore scan intake', () => {
     store.close();
   });
 
+  it('defers an autonomous clarification without consuming a retry attempt', () => {
+    const store = new TransactionCategorizationStore(':memory:');
+    store.recordScanPage({
+      previousWatermark: null,
+      watermark: watermarkA,
+      observations: [observer()],
+      observedAt: start,
+    });
+    const eventId = store.getByImportedId('bank-import-one')!.id;
+    const classify = store.claimNextJob(start)!;
+    store.recordAttentionAndEnqueueClarification(
+      classify.id,
+      eventId,
+      'model-low-confidence',
+      'Which category?',
+      'private-finance-room',
+      start,
+    );
+    const firstClaim = store.claimNextJob(start)!;
+    expect(firstClaim.attemptCount).toBe(1);
+    store.deferTalkJobWithoutAttempt(firstClaim.id, expired);
+    expect(store.claimNextJob(start)).toBeUndefined();
+    expect(store.claimNextJob(expired)).toMatchObject({
+      kind: 'send-transaction-categorization-clarification',
+      attemptCount: 1,
+    });
+    store.close();
+  });
+
   it('rejects deleted or split-child fields that the observer adapter must omit', () => {
     const store = new TransactionCategorizationStore(':memory:');
     const deleted = {

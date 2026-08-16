@@ -143,6 +143,9 @@ function source(): ConversationalTransactionEditSource {
   return {
     idempotencyKey: 'context-route-edit/one',
     contextEventId: randomUUID(),
+    questionEventId: randomUUID(),
+    backendUrl: 'https://cloud.example.test',
+    roomToken: 'household-finance',
     actorId: 'alex',
     messageId: '34084',
     message: 'The larger Traders payment is house insurance. Remember that.',
@@ -239,9 +242,9 @@ function harness(
       ? {}
       : { receiptReservationSource }),
     workflow: {
-      enqueue(payload) {
+      enqueue(payload, origin) {
         payloads.push(structuredClone(payload));
-        return workflow.enqueue(payload);
+        return workflow.enqueue(payload, origin);
       },
     },
     authenticator,
@@ -251,7 +254,7 @@ function harness(
 
 describe('ConversationalTransactionEditAdapter', () => {
   it('enqueues one identifier-free public single-category intent idempotently', async () => {
-    const { adapter, payloads } = harness();
+    const { adapter, intentStore, payloads } = harness();
     const requestSource = source();
     const profile = createEmptyHouseholdProfile(instant);
 
@@ -270,6 +273,16 @@ describe('ConversationalTransactionEditAdapter', () => {
 
     expect(first.inserted).toBe(true);
     expect(replay.inserted).toBe(false);
+    expect(first.replyOwnedByDurableInteraction).toBe(true);
+    expect(replay.replyOwnedByDurableInteraction).toBe(true);
+    expect(
+      intentStore.getConversationalOrigin(first.intent.proposal.intentId),
+    ).toMatchObject({
+      questionEventId: requestSource.questionEventId,
+      backendUrl: requestSource.backendUrl,
+      roomToken: requestSource.roomToken,
+      sourceMessageId: requestSource.messageId,
+    });
     expect(first.intent.status).toBe('awaiting-approval');
     expect(first.intent.proposal.categorization).toEqual({
       kind: 'single',

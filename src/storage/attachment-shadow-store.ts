@@ -460,6 +460,39 @@ export class AttachmentShadowStore {
     return row === undefined ? undefined : toInboundEvent(row);
   }
 
+  hasPendingFirstResponse(roomToken: string): boolean {
+    if (roomToken.length === 0 || roomToken !== roomToken.trim()) {
+      throw new TypeError('roomToken is invalid');
+    }
+    return (
+      this.#database
+        .prepare(
+          `SELECT 1
+             FROM attachment_inbound_events AS inbound
+             JOIN attachment_shadow_items AS item
+               ON item.event_id = inbound.id
+            WHERE inbound.room_token = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM attachment_outbox AS delivered
+                 WHERE delivered.event_id = inbound.id
+                   AND delivered.kind = 'deliver-attachment-result'
+                   AND delivered.state = 'completed'
+              )
+              AND (
+                item.status IN ('received', 'preserved')
+                OR EXISTS (
+                  SELECT 1 FROM attachment_outbox AS pending
+                   WHERE pending.event_id = inbound.id
+                     AND pending.kind = 'deliver-attachment-result'
+                     AND pending.state IN ('pending', 'processing')
+                )
+              )
+            LIMIT 1`,
+        )
+        .get(roomToken) !== undefined
+    );
+  }
+
   findReceiptByIdempotencyKey(
     idempotencyKey: string,
   ): ReceiptAttachmentReference | undefined {

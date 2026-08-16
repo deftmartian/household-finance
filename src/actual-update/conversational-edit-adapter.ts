@@ -41,6 +41,9 @@ const sourceSchema = z.strictObject({
     .max(500)
     .refine((value) => value === value.trim() && !value.includes('\0')),
   contextEventId: z.uuid(),
+  questionEventId: z.uuid(),
+  backendUrl: z.url(),
+  roomToken: z.string().min(1).max(500),
   actorId: z.string().min(1).max(200),
   messageId: z.string().min(1).max(200),
   message: z.string().min(1).max(2_000),
@@ -64,6 +67,9 @@ export type ConversationalCategoryKindEvidence = z.infer<
 export interface ConversationalTransactionEditSource {
   readonly idempotencyKey: string;
   readonly contextEventId: string;
+  readonly questionEventId: string;
+  readonly backendUrl: string;
+  readonly roomToken: string;
   readonly actorId: string;
   readonly messageId: string;
   readonly message: string;
@@ -88,6 +94,7 @@ export interface ConversationalTransactionEditAdapterOptions {
 export interface ConversationalTransactionEditResult {
   readonly inserted: boolean;
   readonly intent: ActualUpdatePublicIntent;
+  readonly replyOwnedByDurableInteraction?: boolean;
   /**
    * The caller records this through HouseholdContextStore before completing
    * its route. A replay after the rule is already present returns undefined.
@@ -559,7 +566,14 @@ export class ConversationalTransactionEditAdapter {
         },
       },
     };
-    const enqueued = this.#workflow.enqueue(payload);
+    const enqueued = this.#workflow.enqueue(payload, {
+      questionEventId: source.questionEventId,
+      backendUrl: source.backendUrl,
+      roomToken: source.roomToken,
+      actorId: source.actorId,
+      sourceMessageId: source.messageId,
+      receivedAt: canonicalInstant(source.receivedAt),
+    });
     if (
       JSON.stringify(enqueued.intent.proposal) !==
       JSON.stringify(payload.publicProposal)
@@ -569,6 +583,12 @@ export class ConversationalTransactionEditAdapter {
     return {
       inserted: enqueued.inserted,
       intent: enqueued.intent,
+      ...(enqueued.conversationalOriginRecorded === undefined
+        ? {}
+        : {
+            replyOwnedByDurableInteraction:
+              enqueued.conversationalOriginRecorded,
+          }),
       ...(ruleMutation === undefined
         ? {}
         : { recurringRuleMutation: ruleMutation }),

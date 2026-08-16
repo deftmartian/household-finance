@@ -1853,6 +1853,28 @@ export class ReceiptCategorizationStore {
     this.#retryClaimedJob(jobId, errorCode, availableAt);
   }
 
+  deferTalkJobWithoutAttempt(jobId: number, availableAtInput: string): void {
+    const availableAt = timestampSchema.parse(availableAtInput);
+    const changed = this.#database
+      .prepare(
+        `UPDATE receipt_categorization_outbox
+            SET state = 'pending',
+                attempt_count = attempt_count - 1,
+                available_at = ?,
+                locked_at = NULL,
+                lease_expires_at = NULL,
+                last_error = NULL
+          WHERE id = ?
+            AND kind = 'send-receipt-categorization-clarification'
+            AND state = 'processing'
+            AND attempt_count > 0`,
+      )
+      .run(availableAt, jobId);
+    if (changed.changes !== 1) {
+      throw new Error('Receipt Talk deferral does not own the claimed job');
+    }
+  }
+
   /**
    * Durable backpressure for a newer canonical receipt revision while the
    * prior matcher/apply job is still inside its short processing lease.

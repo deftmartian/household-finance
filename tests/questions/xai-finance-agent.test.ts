@@ -686,7 +686,7 @@ describe('xAI household-finance agent', () => {
     });
   });
 
-  it('keeps Grok’s summary when only part of a write batch has a durable reply', async () => {
+  it('uses deterministic companion text when only part of a write batch has a durable reply', async () => {
     const approvalTool: FinanceQuestionAdditionalTool = {
       stateChanging: true,
       name: 'categorize_transaction',
@@ -696,7 +696,10 @@ describe('xAI household-finance agent', () => {
         properties: {},
         additionalProperties: false,
       },
-      execute: async () => ({ status: 'needs-approval' }),
+      execute: async () => ({
+        status: 'needs-approval',
+        message: 'Owned result that must not be repeated.',
+      }),
       didHandleTalkReply: () => true,
     };
     const ruleTool: FinanceQuestionAdditionalTool = {
@@ -708,7 +711,10 @@ describe('xAI household-finance agent', () => {
         properties: {},
         additionalProperties: false,
       },
-      execute: async () => ({ status: 'saved' }),
+      execute: async () => ({
+        status: 'saved',
+        message: 'I saved the merchant rule for future transactions.',
+      }),
       didHandleTalkReply: () => false,
     };
     const client: StructuredFinanceAgentClient = {
@@ -721,7 +727,7 @@ describe('xAI household-finance agent', () => {
           .execute({});
         return {
           value:
-            'I saved the merchant rule. The transaction edit still needs your approval.',
+            'Model-authored restatement that must be replaced deterministically.',
           metadata: {
             ...metadata,
             toolCalls: [approvalTool.name, ruleTool.name],
@@ -735,7 +741,9 @@ describe('xAI household-finance agent', () => {
         approvalTool,
         ruleTool,
       ]).answer(input),
-    ).resolves.not.toHaveProperty('replyHandled');
+    ).resolves.toMatchObject({
+      answer: 'I saved the merchant rule for future transactions.',
+    });
   });
 
   it('does not turn a post-write model failure into a contradictory failure reply', async () => {

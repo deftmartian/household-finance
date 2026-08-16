@@ -90,6 +90,7 @@ import {
   ReceiptPipelineReconciler,
   runWorkerKicksInOrder,
 } from './workflow/index.js';
+import { InteractiveActivityReader } from './workflow/interactive-activity.js';
 
 const unavailableFinanceBotWriter = {
   update: (): never => {
@@ -325,6 +326,17 @@ export function createProductionRuntime(
         signal: abortController.signal,
       }),
     );
+    const questionStore = own(
+      new QuestionStore(join(config.dataDirectory, 'finance-questions.sqlite')),
+      (store) => store.close(),
+    );
+    questionStore.recoverInterruptedOutbox(startupTime);
+    const interactiveActivity = new InteractiveActivityReader([
+      questionStore,
+      attachmentStore,
+      householdContextStore,
+      actualUpdateTalkStore,
+    ]);
 
     const transactionCategorizationStore = own(
       new TransactionCategorizationStore(
@@ -382,6 +394,7 @@ export function createProductionRuntime(
           receiptMatchStore,
         ),
         talk,
+        interactiveActivity,
         signal: abortController.signal,
       }),
     );
@@ -404,6 +417,7 @@ export function createProductionRuntime(
         matches: receiptMatchStore,
         sources: receiptCategorizationStore,
         talk,
+        interactiveActivity,
       },
     );
 
@@ -442,6 +456,7 @@ export function createProductionRuntime(
         classifier: new XaiTransactionCategoryClassifier(structuredModel),
         updateSink: transactionCategoryUpdateSink,
         talk,
+        interactiveActivity,
         talkRoomToken: config.householdFinanceRoomToken,
         specialCategoryAliases: {
           cashback: 'cashback',
@@ -460,11 +475,6 @@ export function createProductionRuntime(
       workflow: actualUpdateWorkflow,
       authenticator: actualUpdateAuthenticator,
     });
-    const questionStore = own(
-      new QuestionStore(join(config.dataDirectory, 'finance-questions.sqlite')),
-      (store) => store.close(),
-    );
-    questionStore.recoverInterruptedOutbox(startupTime);
     const pendingReceiptTool = pendingReceiptReadTool({
       matches: receiptMatchStore,
       actual: deterministicActualReader,
@@ -502,6 +512,7 @@ export function createProductionRuntime(
                     recentReceiptReadTool({
                       actual: deterministicActualReader,
                       attachments: attachmentStore,
+                      matches: receiptMatchStore,
                       roomToken: actionContext.roomToken,
                       focusedMessageIds: receiptReplyAncestryMessageIds(input),
                     }),
@@ -671,6 +682,10 @@ export function createProductionRuntime(
       {
         name: 'actual-update-talk',
         kick: () => actualUpdateTalkInteractionWorker.kick(),
+      },
+      {
+        name: 'transaction-categorization-outbox',
+        kick: () => transactionCategorizationWorker.kickOutbox(),
       },
     ];
     const receiptMatchWakeupKick: NamedWorkerKick = {

@@ -156,6 +156,56 @@ class ReconcilingTalk {
 }
 
 describe('FinanceQuestionWorkflow', () => {
+  it('denies state changes from a decision-only message that reached the general agent', async () => {
+    const store = new QuestionStore(':memory:');
+    let reservation: boolean | undefined;
+    const workflow = new FinanceQuestionWorkflow({
+      store,
+      agent: {
+        answer: async (input) => {
+          reservation = input.actionContext?.reserveStateChange?.(
+            'categorize_transaction',
+            { category: 'groceries' },
+          );
+          return {
+            answer: 'Please reply directly to the specific approval prompt.',
+            metadata: metadata(['categorize_transaction']),
+          };
+        },
+      },
+      conversationHistorySource: { recentConversation: async () => [] },
+      talk: { sendReplyWithIdentity: async (reply) => deliveredReply(reply) },
+      timeZone: 'America/Halifax',
+      allowedUserIds,
+      now: () => new Date(now),
+    });
+    const event = store.recordInbound(
+      {
+        idempotencyKey: 'question:unbound-confirmation',
+        backendUrl: 'https://cloud.example.test',
+        roomToken: 'household-finance',
+        actorId: 'alex',
+        messageId: '41',
+        question: 'yes',
+        receivedAt: now,
+      },
+      { enqueueAcknowledgement: false },
+    ).event;
+
+    await expect(workflow.processAvailable()).resolves.toBe(2);
+    expect(reservation).toBe(false);
+    expect(store.listAudit(event.id)).toContainEqual(
+      expect.objectContaining({
+        action: 'question.state-change-denied',
+        detail: {
+          toolName: 'categorize_transaction',
+          reasonCode: 'unbound-confirmation',
+        },
+      }),
+    );
+    store.close();
+  });
+
   it('uses the required finance agent with bounded Talk history and household context', async () => {
     const store = new QuestionStore(':memory:');
     const prior = store.recordInbound(

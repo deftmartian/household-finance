@@ -61,6 +61,20 @@ The proposal becomes a narrowly typed, signed intent. Only `actual-writer` has
 the write credential; it applies the intent, reads the transaction back, and
 records the outcome.
 
+For conversational intents, an additive origin row records the authenticated
+Talk room, source message, and question event in the same transaction as the
+intent; the signed writer envelope remains version 2 and unchanged. That
+origin lets the deterministic Talk worker own user-visible progress and final
+outcomes. Automatic updates reply to the source message, manual outcomes stay
+under their approval prompt, and an uncertain apply is reported only after its
+safe reconciliation schedule is exhausted.
+
+Autonomous categorization and receipt-match prompts consult a read-only
+interactive-activity view over the existing durable stores. They defer for one
+poll interval while a newer interaction awaits its first visible response;
+the underlying worker queues retain ownership and the deferral does not spend
+a retry attempt.
+
 ## Data ownership
 
 - Nextcloud Files holds immutable source documents.

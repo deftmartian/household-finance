@@ -350,6 +350,49 @@ function stateChangesOwnTalkReply(
   );
 }
 
+function deterministicCompanionAnswer(
+  tools: readonly FinanceQuestionAdditionalTool[],
+  results: readonly { readonly toolName: string; readonly value: unknown }[],
+  unownedLimitAttempt: boolean,
+): string | undefined {
+  const executedNames = new Set(results.map((result) => result.toolName));
+  const ownedNames = new Set(
+    [...executedNames].filter(
+      (name) =>
+        tools.find((tool) => tool.name === name)?.didHandleTalkReply?.() ===
+        true,
+    ),
+  );
+  if (ownedNames.size === 0 || ownedNames.size === executedNames.size) {
+    return undefined;
+  }
+  const messages = results.flatMap(({ toolName, value }) => {
+    if (
+      ownedNames.has(toolName) ||
+      value === null ||
+      typeof value !== 'object' ||
+      Array.isArray(value)
+    ) {
+      return [];
+    }
+    const message = (value as { message?: unknown }).message;
+    if (typeof message !== 'string') return [];
+    const parsed = wifeTestText(MAX_ANSWER_CHARACTERS).safeParse(message);
+    return parsed.success ? [parsed.data] : [];
+  });
+  if (unownedLimitAttempt) {
+    messages.push(
+      'No additional change was made after the safe per-message change limit was reached.',
+    );
+  }
+  const unique = [...new Set(messages)];
+  if (unique.length === 0) {
+    return 'The remaining requested action completed without a separate Talk update.';
+  }
+  const joined = unique.join('\n\n');
+  return [...joined].slice(0, MAX_ANSWER_CHARACTERS).join('');
+}
+
 function canCorrectInvalidResponse(
   error: unknown,
   signal: AbortSignal | undefined,
@@ -406,6 +449,10 @@ export class XaiFinanceQuestionAgent implements FinanceQuestionAgent {
     const normalized = normalizeInput(input);
     const additionalTools = this.#additionalTools?.(input) ?? [];
     const executedStateChangingToolNames = new Set<string>();
+    const stateChangingToolResults: Array<{
+      readonly toolName: string;
+      readonly value: unknown;
+    }> = [];
     let unownedLimitAttempt = false;
     const trackedAdditionalTools = additionalTools.map((tool) =>
       tool.stateChanging !== true
@@ -414,7 +461,12 @@ export class XaiFinanceQuestionAgent implements FinanceQuestionAgent {
             ...tool,
             execute: async (value: unknown, toolSignal?: AbortSignal) => {
               executedStateChangingToolNames.add(tool.name);
-              return tool.execute(value, toolSignal);
+              const result = await tool.execute(value, toolSignal);
+              stateChangingToolResults.push({
+                toolName: tool.name,
+                value: result,
+              });
+              return result;
             },
           },
     );
@@ -492,17 +544,24 @@ export class XaiFinanceQuestionAgent implements FinanceQuestionAgent {
           executedStateChangingToolNames,
           unownedLimitAttempt,
         );
+        const companionAnswer = deterministicCompanionAnswer(
+          additionalTools,
+          stateChangingToolResults,
+          unownedLimitAttempt,
+        );
         const parsed = wifeTestText(MAX_ANSWER_CHARACTERS).safeParse(run.value);
-        if (!parsed.success && !replyHandled) {
+        if (!parsed.success && !replyHandled && companionAnswer === undefined) {
           throw new FinanceQuestionAgentError(
             'invalid-response',
             'final-answer',
           );
         }
         return {
-          answer: parsed.success
-            ? parsed.data
-            : 'The requested change was handled separately.',
+          answer:
+            companionAnswer ??
+            (parsed.success
+              ? parsed.data
+              : 'The requested change was handled separately.'),
           metadata:
             correctiveRetries === 0
               ? run.metadata

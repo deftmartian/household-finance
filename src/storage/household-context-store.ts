@@ -1114,6 +1114,27 @@ export class HouseholdContextStore {
     return row === undefined ? undefined : toMutationRecord(row);
   }
 
+  hasPendingFirstResponse(roomTokenInput: string): boolean {
+    const roomToken = identifierSchema.parse(roomTokenInput);
+    return (
+      this.#database
+        .prepare(
+          `SELECT 1
+             FROM household_context_outbox AS outbox
+             JOIN household_context_mutations AS mutation
+               ON mutation.id = outbox.event_id
+            WHERE mutation.room_token = ?
+              AND outbox.kind IN (
+                'send-context-mutation-acknowledgement',
+                'send-context-undo-acknowledgement'
+              )
+              AND outbox.state IN ('pending', 'processing')
+            LIMIT 1`,
+        )
+        .get(roomToken) !== undefined
+    );
+  }
+
   getMutationByMutationId(
     mutationId: string,
   ): HouseholdContextMutationRecord | undefined {

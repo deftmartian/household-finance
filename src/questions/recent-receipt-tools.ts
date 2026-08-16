@@ -14,6 +14,7 @@ import type {
   AttachmentShadowStore,
   ReceiptAttachmentReference,
 } from '../storage/attachment-shadow-store.js';
+import type { ReceiptMatchStore } from '../storage/receipt-match-store.js';
 import type { FinanceQuestionAdditionalTool } from './xai-finance-agent.js';
 
 const MAXIMUM_RECEIPTS = 10;
@@ -31,6 +32,7 @@ export interface RecentReceiptReadToolOptions {
     AttachmentShadowStore,
     'findReceiptsByRoomMessage'
   >;
+  readonly matches?: Pick<ReceiptMatchStore, 'getReceipt'>;
   readonly roomToken: string;
   readonly focusedMessageIds?: readonly string[];
 }
@@ -163,6 +165,12 @@ function focusedUnsettledReceipt(
         selection: 'focused-unsettled-upload',
         receipt: {
           receivedAt: candidate.event.receivedAt,
+          receiptMatchStatus: receiptMatchState(
+            options,
+            match.disposition === 'ready'
+              ? match.intent.receiptId
+              : candidate.event.id,
+          ),
           merchant:
             receipt.merchant.value === null
               ? null
@@ -272,13 +280,42 @@ function missingOrUnclearDetails(
   return details;
 }
 
+function receiptMatchState(
+  options: RecentReceiptReadToolOptions,
+  receiptId: string,
+):
+  | 'not-enrolled'
+  | 'waiting-for-bank-transaction'
+  | 'needs-transaction-selection'
+  | 'matched-pending-application'
+  | 'applied'
+  | 'attention' {
+  const match = options.matches?.getReceipt(receiptId);
+  switch (match?.status) {
+    case undefined:
+      return 'not-enrolled';
+    case 'awaiting-bank-transaction':
+      return 'waiting-for-bank-transaction';
+    case 'ambiguous':
+      return 'needs-transaction-selection';
+    case 'matched':
+      return 'matched-pending-application';
+    case 'applied':
+      return 'applied';
+    case 'attention':
+      return 'attention';
+  }
+}
+
 function publicReceiptFacts(
   receipt: HouseholdFinanceActiveReceiptRecordV1,
   receivedAt: string,
+  options: RecentReceiptReadToolOptions,
 ) {
   const currency = receipt.currency;
   return {
     receivedAt,
+    receiptMatchStatus: receiptMatchState(options, receipt.receiptId),
     merchant: receipt.merchant === null ? null : visibleText(receipt.merchant),
     purchaseDate: receipt.purchaseDate,
     total: amount(currency, receipt.amounts.totalMinor),
@@ -316,9 +353,10 @@ function publicItem(
 function selectedReceipt(
   receipt: HouseholdFinanceActiveReceiptRecordV1,
   receivedAt: string,
+  options: RecentReceiptReadToolOptions,
 ) {
   return {
-    ...publicReceiptFacts(receipt, receivedAt),
+    ...publicReceiptFacts(receipt, receivedAt, options),
     allRecordedItems: {
       recordedCount: receipt.items.length,
       entries: receipt.items.map((item) => publicItem(receipt, item)),
@@ -329,12 +367,13 @@ function selectedReceipt(
 function recentReceiptPreview(
   receipt: HouseholdFinanceActiveReceiptRecordV1,
   receivedAt: string,
+  options: RecentReceiptReadToolOptions,
 ) {
   const entries = receipt.items
     .slice(0, MAXIMUM_PREVIEW_ITEMS_PER_RECEIPT)
     .map((item) => publicItem(receipt, item));
   return {
-    ...publicReceiptFacts(receipt, receivedAt),
+    ...publicReceiptFacts(receipt, receivedAt, options),
     itemPreview: {
       recordedCount: receipt.items.length,
       returnedCount: entries.length,
@@ -440,12 +479,16 @@ export function recentReceiptReadTool(
                   focused === undefined
                     ? 'latest-room-receipt'
                     : 'focused-message',
-                receipt: selectedReceipt(selected.receipt, selected.receivedAt),
+                receipt: selectedReceipt(
+                  selected.receipt,
+                  selected.receivedAt,
+                  options,
+                ),
               },
         recentReceipts: roomReceipts
           .slice(0, MAXIMUM_RECEIPTS)
           .map(({ receipt, receivedAt }) =>
-            recentReceiptPreview(receipt, receivedAt),
+            recentReceiptPreview(receipt, receivedAt, options),
           ),
         moreReceiptsMayExist:
           !scanned.complete || roomReceipts.length > MAXIMUM_RECEIPTS,

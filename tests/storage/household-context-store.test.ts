@@ -122,10 +122,14 @@ describe('HouseholdContextStore', () => {
     expect(store.getMutationItem(first.record.id)).toMatchObject({
       status: 'pending',
     });
-    expect(store.claimNextOutbox(requestedAt)).toMatchObject({
+    expect(store.hasPendingFirstResponse('household-finance')).toBe(true);
+    const acknowledgement = store.claimNextOutbox(requestedAt);
+    expect(acknowledgement).toMatchObject({
       kind: 'send-context-mutation-acknowledgement',
       eventId: first.record.id,
     });
+    store.completeOutbox(acknowledgement!.id, requestedAt);
+    expect(store.hasPendingFirstResponse('household-finance')).toBe(false);
     store.close();
   });
 

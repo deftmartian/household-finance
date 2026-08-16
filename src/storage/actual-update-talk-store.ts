@@ -5,6 +5,8 @@ import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
 
+import type { TalkDeliveredMessageIdentity } from '../talk/client.js';
+
 const identifierSchema = z
   .string()
   .min(1)
@@ -194,6 +196,45 @@ const talkInteractionSchema = `
     planned_at TEXT NOT NULL
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS actual_update_talk_progress_deliveries (
+    intent_id TEXT PRIMARY KEY,
+    delivery_idempotency_key TEXT NOT NULL UNIQUE,
+    room_token TEXT NOT NULL,
+    reply_to TEXT NOT NULL,
+    reference_id TEXT NOT NULL UNIQUE CHECK (length(reference_id) = 64),
+    message_text TEXT NOT NULL CHECK (length(message_text) BETWEEN 1 AND 32000),
+    message_sha256 TEXT NOT NULL CHECK (length(message_sha256) = 64),
+    state TEXT NOT NULL CHECK (
+      state IN ('pending', 'delivering', 'delivered', 'suppressed')
+    ),
+    bot_actor_id TEXT,
+    bot_message_id TEXT,
+    available_at TEXT NOT NULL,
+    lease_token TEXT,
+    lease_expires_at TEXT,
+    created_at TEXT NOT NULL,
+    delivered_at TEXT,
+    last_error_code TEXT,
+    CHECK (
+      (state = 'delivered'
+        AND bot_actor_id IS NOT NULL
+        AND bot_message_id IS NOT NULL
+        AND delivered_at IS NOT NULL
+        AND lease_token IS NULL
+        AND lease_expires_at IS NULL)
+      OR
+      (state != 'delivered'
+        AND bot_actor_id IS NULL
+        AND bot_message_id IS NULL
+        AND delivered_at IS NULL)
+    )
+  ) STRICT;
+
+  CREATE INDEX IF NOT EXISTS actual_update_talk_progress_ready
+    ON actual_update_talk_progress_deliveries(
+      state, available_at, lease_expires_at, created_at, intent_id
+    );
+
 `;
 
 interface DeliveryRow {
@@ -250,6 +291,25 @@ interface AutoApprovalRow {
   decision_id: string;
   actor_id: string;
   approved_at: string;
+}
+
+interface ProgressDeliveryRow {
+  intent_id: string;
+  delivery_idempotency_key: string;
+  room_token: string;
+  reply_to: string;
+  reference_id: string;
+  message_text: string;
+  message_sha256: string;
+  state: 'pending' | 'delivering' | 'delivered' | 'suppressed';
+  bot_actor_id: string | null;
+  bot_message_id: string | null;
+  available_at: string;
+  lease_token: string | null;
+  lease_expires_at: string | null;
+  created_at: string;
+  delivered_at: string | null;
+  last_error_code: string | null;
 }
 
 export interface PlanActualUpdateTalkDeliveryInput {
@@ -322,6 +382,28 @@ export interface ActualUpdateTalkParentIdentity {
   readonly roomToken: string;
   readonly botActorId: string;
   readonly botMessageId: string;
+}
+
+export interface ActualUpdateTalkProgressDelivery {
+  readonly intentId: string;
+  readonly deliveryIdempotencyKey: string;
+  readonly roomToken: string;
+  readonly replyTo: string;
+  readonly referenceId: string;
+  readonly message: string;
+  readonly messageSha256: string;
+  readonly state: 'pending' | 'delivering' | 'delivered' | 'suppressed';
+  readonly botActorId: string | null;
+  readonly botMessageId: string | null;
+  readonly availableAt: string;
+  readonly deliveredAt: string | null;
+  readonly lastErrorCode: string | null;
+}
+
+export interface ActualUpdateTalkProgressDeliveryClaim extends ActualUpdateTalkProgressDelivery {
+  readonly state: 'delivering';
+  readonly leaseToken: string;
+  readonly leaseExpiresAt: string;
 }
 
 export type ActualUpdateTalkInboundAction = 'approve' | 'reject' | 'undo';
@@ -424,6 +506,26 @@ function outcomeDeliveryFromRow(
     lastErrorCode: row.last_error_code,
   };
 }
+
+function progressDeliveryFromRow(
+  row: ProgressDeliveryRow,
+): ActualUpdateTalkProgressDelivery {
+  return {
+    intentId: row.intent_id,
+    deliveryIdempotencyKey: row.delivery_idempotency_key,
+    roomToken: row.room_token,
+    replyTo: row.reply_to,
+    referenceId: row.reference_id,
+    message: row.message_text,
+    messageSha256: row.message_sha256,
+    state: row.state,
+    botActorId: row.bot_actor_id,
+    botMessageId: row.bot_message_id,
+    availableAt: row.available_at,
+    deliveredAt: row.delivered_at,
+    lastErrorCode: row.last_error_code,
+  };
+}
 function inboundActionFromRow(
   row: InboundActionRow,
 ): ActualUpdateTalkInboundActionRecord {
@@ -475,6 +577,36 @@ export class ActualUpdateTalkStore {
 
   close(): void {
     this.#database.close();
+  }
+
+  hasPendingFirstResponse(roomTokenInput: string): boolean {
+    const roomToken = identifier(roomTokenInput, 'roomToken');
+    const progress = this.#database
+      .prepare(
+        `SELECT 1
+           FROM actual_update_talk_progress_deliveries
+          WHERE room_token = ? AND state IN ('pending', 'delivering')
+          LIMIT 1`,
+      )
+      .get(roomToken);
+    if (progress !== undefined) return true;
+    return (
+      this.#database
+        .prepare(
+          `SELECT 1
+             FROM actual_update_talk_deliveries AS delivery
+            WHERE delivery.room_token = ?
+              AND delivery.state IN ('pending', 'delivering')
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM actual_update_talk_progress_deliveries AS progress
+                 WHERE progress.intent_id = delivery.intent_id
+                   AND progress.state = 'delivered'
+              )
+            LIMIT 1`,
+        )
+        .get(roomToken) !== undefined
+    );
   }
 
   planDelivery(input: PlanActualUpdateTalkDeliveryInput): {
@@ -1228,6 +1360,264 @@ export class ActualUpdateTalkStore {
       .get(identifier(intentIdInput, 'intentId')) as
       { outcome_status: 'applied' | 'failed' } | undefined;
     return row?.outcome_status;
+  }
+
+  planProgressDelivery(input: {
+    readonly intentId: string;
+    readonly deliveryIdempotencyKey: string;
+    readonly roomToken: string;
+    readonly replyTo: string;
+    readonly referenceId: string;
+    readonly message: string;
+    readonly createdAt: string;
+    readonly availableAt: string;
+  }): ActualUpdateTalkProgressDelivery {
+    const intentId = identifier(input.intentId, 'intentId');
+    const deliveryIdempotencyKey = sha256Schema.parse(
+      input.deliveryIdempotencyKey,
+    );
+    const roomToken = identifier(input.roomToken, 'roomToken');
+    const replyTo = messageIdSchema.parse(input.replyTo);
+    const referenceId = sha256Schema.parse(input.referenceId);
+    const message = messageSchema.parse(input.message);
+    const messageSha256 = actualUpdateTalkMessageSha256(message);
+    const createdAt = normalizedInstant(input.createdAt, 'createdAt');
+    const availableAt = normalizedInstant(input.availableAt, 'availableAt');
+    if (availableAt < createdAt) {
+      throw new TypeError('Actual update progress cannot precede its intent');
+    }
+    return this.#database.transaction(() => {
+      const existing = this.getProgressDelivery(intentId);
+      if (existing !== undefined) {
+        if (
+          existing.deliveryIdempotencyKey !== deliveryIdempotencyKey ||
+          existing.roomToken !== roomToken ||
+          existing.replyTo !== replyTo ||
+          existing.referenceId !== referenceId ||
+          existing.message !== message ||
+          existing.availableAt !== availableAt
+        ) {
+          throw new ActualUpdateTalkStoreConflictError(
+            'Actual update progress delivery identity was reused with different content',
+          );
+        }
+        return existing;
+      }
+      this.#database
+        .prepare(
+          `INSERT INTO actual_update_talk_progress_deliveries (
+             intent_id, delivery_idempotency_key, room_token, reply_to,
+             reference_id, message_text, message_sha256, state,
+             available_at, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        )
+        .run(
+          intentId,
+          deliveryIdempotencyKey,
+          roomToken,
+          replyTo,
+          referenceId,
+          message,
+          messageSha256,
+          availableAt,
+          createdAt,
+        );
+      return this.getProgressDelivery(intentId)!;
+    })();
+  }
+
+  getProgressDelivery(
+    intentIdInput: string,
+  ): ActualUpdateTalkProgressDelivery | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT *
+           FROM actual_update_talk_progress_deliveries
+          WHERE intent_id = ?`,
+      )
+      .get(identifier(intentIdInput, 'intentId')) as
+      ProgressDeliveryRow | undefined;
+    return row === undefined ? undefined : progressDeliveryFromRow(row);
+  }
+
+  listDueProgressIntentIds(nowInput: string, maximum = 100): readonly string[] {
+    const now = normalizedInstant(nowInput, 'now');
+    if (!Number.isSafeInteger(maximum) || maximum < 0 || maximum > 1_000) {
+      throw new RangeError('maximum must be from 0 to 1000');
+    }
+    const rows = this.#database
+      .prepare(
+        `SELECT intent_id
+           FROM actual_update_talk_progress_deliveries
+          WHERE state IN ('pending', 'delivering')
+            AND available_at <= ?
+            AND (
+              state = 'pending'
+              OR lease_expires_at IS NULL
+              OR lease_expires_at <= ?
+            )
+          ORDER BY available_at, created_at, intent_id
+          LIMIT ?`,
+      )
+      .all(now, now, maximum) as { intent_id: string }[];
+    return rows.map((row) => row.intent_id);
+  }
+
+  suppressProgressDelivery(intentIdInput: string): void {
+    const intentId = identifier(intentIdInput, 'intentId');
+    this.#database
+      .prepare(
+        `UPDATE actual_update_talk_progress_deliveries
+            SET state = 'suppressed',
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                last_error_code = NULL
+          WHERE intent_id = ? AND state IN ('pending', 'delivering')`,
+      )
+      .run(intentId);
+  }
+
+  claimProgressDelivery(
+    intentIdInput: string,
+    nowInput: string,
+  ): ActualUpdateTalkProgressDeliveryClaim | undefined {
+    const intentId = identifier(intentIdInput, 'intentId');
+    const now = normalizedInstant(nowInput, 'now');
+    return this.#database.transaction(() => {
+      const row = this.#database
+        .prepare(
+          `SELECT *
+             FROM actual_update_talk_progress_deliveries
+            WHERE intent_id = ?`,
+        )
+        .get(intentId) as ProgressDeliveryRow | undefined;
+      if (
+        row === undefined ||
+        row.state === 'delivered' ||
+        row.state === 'suppressed' ||
+        row.available_at > now ||
+        (row.state === 'delivering' &&
+          row.lease_expires_at !== null &&
+          row.lease_expires_at > now)
+      ) {
+        return undefined;
+      }
+      const leaseToken = randomUUID();
+      const leaseExpiresAt = addMilliseconds(now, this.#leaseDurationMs);
+      const changed = this.#database
+        .prepare(
+          `UPDATE actual_update_talk_progress_deliveries
+              SET state = 'delivering',
+                  lease_token = ?,
+                  lease_expires_at = ?,
+                  last_error_code = NULL
+            WHERE intent_id = ?
+              AND state IN ('pending', 'delivering')
+              AND available_at <= ?
+              AND (
+                state = 'pending'
+                OR lease_expires_at IS NULL
+                OR lease_expires_at <= ?
+              )`,
+        )
+        .run(leaseToken, leaseExpiresAt, intentId, now, now);
+      if (changed.changes !== 1) return undefined;
+      const claimed = this.getProgressDelivery(intentId)!;
+      return {
+        ...claimed,
+        state: 'delivering' as const,
+        leaseToken,
+        leaseExpiresAt,
+      };
+    })();
+  }
+
+  completeProgressDelivery(
+    intentIdInput: string,
+    leaseTokenInput: string,
+    identity: TalkDeliveredMessageIdentity,
+    deliveredAtInput: string,
+  ): ActualUpdateTalkProgressDelivery {
+    const intentId = identifier(intentIdInput, 'intentId');
+    const leaseToken = identifier(leaseTokenInput, 'leaseToken');
+    const deliveredAt = normalizedInstant(deliveredAtInput, 'deliveredAt');
+    const row = this.#database
+      .prepare(
+        `SELECT *
+           FROM actual_update_talk_progress_deliveries
+          WHERE intent_id = ?`,
+      )
+      .get(intentId) as ProgressDeliveryRow | undefined;
+    if (
+      row === undefined ||
+      row.state !== 'delivering' ||
+      row.lease_token !== leaseToken ||
+      row.room_token !== identifier(identity.roomToken, 'roomToken') ||
+      row.reply_to !== messageIdSchema.parse(identity.replyTo) ||
+      row.reference_id !== sha256Schema.parse(identity.referenceId)
+    ) {
+      throw new ActualUpdateTalkStoreConflictError(
+        'Actual update progress delivery identity does not match its lease',
+      );
+    }
+    const changed = this.#database
+      .prepare(
+        `UPDATE actual_update_talk_progress_deliveries
+            SET state = 'delivered',
+                bot_actor_id = ?,
+                bot_message_id = ?,
+                delivered_at = ?,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                last_error_code = NULL
+          WHERE intent_id = ? AND state = 'delivering' AND lease_token = ?`,
+      )
+      .run(
+        fullBotActorIdSchema.parse(identity.botActorId),
+        messageIdSchema.parse(identity.messageId),
+        deliveredAt,
+        intentId,
+        leaseToken,
+      );
+    if (changed.changes !== 1) {
+      throw new ActualUpdateTalkStoreConflictError(
+        'Actual update progress delivery lost its active lease',
+      );
+    }
+    const delivery = this.getProgressDelivery(intentId);
+    if (delivery?.state !== 'delivered') {
+      throw new Error('Actual update progress delivery was not completed');
+    }
+    return delivery;
+  }
+
+  retryProgressDelivery(
+    intentIdInput: string,
+    leaseTokenInput: string,
+    errorCodeInput: string,
+    availableAtInput: string,
+  ): void {
+    const changed = this.#database
+      .prepare(
+        `UPDATE actual_update_talk_progress_deliveries
+            SET state = 'pending',
+                available_at = ?,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                last_error_code = ?
+          WHERE intent_id = ? AND state = 'delivering' AND lease_token = ?`,
+      )
+      .run(
+        normalizedInstant(availableAtInput, 'availableAt'),
+        identifier(errorCodeInput, 'errorCode'),
+        identifier(intentIdInput, 'intentId'),
+        identifier(leaseTokenInput, 'leaseToken'),
+      );
+    if (changed.changes !== 1) {
+      throw new ActualUpdateTalkStoreConflictError(
+        'Actual update progress retry does not own the active lease',
+      );
+    }
   }
 
   /**

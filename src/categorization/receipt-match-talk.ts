@@ -31,6 +31,9 @@ export interface ReceiptMatchAmbiguityTalkWorkerOptions {
   >;
   readonly sources: ReceiptMatchPromptSource;
   readonly talk: ReceiptMatchPromptTalkSender;
+  readonly interactiveActivity?: {
+    hasPendingFirstResponse(roomToken: string): boolean;
+  };
   readonly now?: () => Date;
 }
 
@@ -109,6 +112,8 @@ export class ReceiptMatchAmbiguityTalkWorker {
   readonly #matches: ReceiptMatchAmbiguityTalkWorkerOptions['matches'];
   readonly #sources: ReceiptMatchPromptSource;
   readonly #talk: ReceiptMatchPromptTalkSender;
+  readonly #interactiveActivity:
+    ReceiptMatchAmbiguityTalkWorkerOptions['interactiveActivity'] | undefined;
   readonly #now: () => Date;
   #running: Promise<number> | undefined;
 
@@ -116,6 +121,7 @@ export class ReceiptMatchAmbiguityTalkWorker {
     this.#matches = options.matches;
     this.#sources = options.sources;
     this.#talk = options.talk;
+    this.#interactiveActivity = options.interactiveActivity;
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -137,6 +143,12 @@ export class ReceiptMatchAmbiguityTalkWorker {
         throw new Error(
           'Receipt match ambiguity has no categorization source identity',
         );
+      }
+      if (
+        this.#interactiveActivity?.hasPendingFirstResponse(source.roomToken) ===
+        true
+      ) {
+        continue;
       }
       const message = appendFinanceInteractionReference(
         renderAmbiguityPrompt(candidate),
@@ -170,6 +182,12 @@ export class ReceiptMatchAmbiguityTalkWorker {
       const source = this.#sources.getSource(candidate.receipt.receiptId);
       if (source === undefined) {
         throw new Error('Receipt outcome has no source message');
+      }
+      if (
+        this.#interactiveActivity?.hasPendingFirstResponse(source.roomToken) ===
+        true
+      ) {
+        continue;
       }
       await this.#talk.sendReplyWithIdentity({
         roomToken: source.roomToken,

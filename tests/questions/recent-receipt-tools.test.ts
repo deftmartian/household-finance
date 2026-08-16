@@ -13,6 +13,7 @@ import {
   type HouseholdFinanceReceiptSource,
 } from '../../src/receipt-record/domain.js';
 import type { ReceiptAttachmentReference } from '../../src/storage/attachment-shadow-store.js';
+import type { ReceiptMatchRecord } from '../../src/storage/receipt-match-store.js';
 
 function source(
   messageId: string,
@@ -205,6 +206,41 @@ function unsettledReceipt(messageId = '90'): ReceiptAttachmentReference {
 }
 
 describe('recent receipt read tool', () => {
+  it.each([
+    [undefined, 'not-enrolled'],
+    ['awaiting-bank-transaction', 'waiting-for-bank-transaction'],
+    ['ambiguous', 'needs-transaction-selection'],
+    ['matched', 'matched-pending-application'],
+    ['applied', 'applied'],
+    ['attention', 'attention'],
+  ] as const)('maps receipt match state %s to %s', async (status, expected) => {
+    const note = activeNote({
+      receiptId: '22222222-2222-4222-8222-222222222222',
+      sources: [source('42', 'current-room', '2026-07-28T12:00:00.000Z')],
+    });
+    const tool = recentReceiptReadTool({
+      actual: {
+        receiptRecords: async () => ({
+          records: [note],
+          nextAfterNoteId: null,
+          truncated: false,
+        }),
+      },
+      matches: {
+        getReceipt: () =>
+          status === undefined ? undefined : ({ status } as ReceiptMatchRecord),
+      },
+      roomToken: 'current-room',
+      focusedMessageIds: ['42'],
+    });
+
+    await expect(tool.execute({})).resolves.toMatchObject({
+      selectedReceipt: {
+        receipt: { receiptMatchStatus: expected },
+      },
+    });
+  });
+
   it('paginates canonical Actual notes and returns only active facts from the current room', async () => {
     const otherRoom = activeNote({
       receiptId: '11111111-1111-4111-8111-111111111111',
@@ -253,6 +289,7 @@ describe('recent receipt read tool', () => {
         selection: 'focused-message',
         receipt: {
           receivedAt: '2026-07-28T12:00:00.000Z',
+          receiptMatchStatus: 'not-enrolled',
           merchant: 'VEVOR Store',
           purchaseDate: null,
           total: {

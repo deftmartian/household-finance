@@ -1900,6 +1900,28 @@ export class TransactionCategorizationStore {
     this.#retryClaimedJob(jobId, errorCode, availableAt);
   }
 
+  deferTalkJobWithoutAttempt(jobId: number, availableAtInput: string): void {
+    const availableAt = timestampSchema.parse(availableAtInput);
+    const changed = this.#database
+      .prepare(
+        `UPDATE transaction_categorization_outbox
+            SET state = 'pending',
+                attempt_count = attempt_count - 1,
+                available_at = ?,
+                locked_at = NULL,
+                lease_expires_at = NULL,
+                last_error = NULL
+          WHERE id = ?
+            AND kind = 'send-transaction-categorization-clarification'
+            AND state = 'processing'
+            AND attempt_count > 0`,
+      )
+      .run(availableAt, jobId);
+    if (changed.changes !== 1) {
+      throw new Error('Transaction Talk deferral does not own the claimed job');
+    }
+  }
+
   failClaimedJob(
     jobId: number,
     eventId: string,

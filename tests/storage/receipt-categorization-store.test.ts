@@ -379,6 +379,39 @@ describe('ReceiptCategorizationStore intake and results', () => {
     store.close();
   });
 
+  it('defers an autonomous clarification without consuming a retry attempt', () => {
+    const store = new ReceiptCategorizationStore(':memory:');
+    store.recordCanonical(source());
+    const job = store.claimNextJob(start)!;
+    store.startProviderCall(job.id, job.eventId, start);
+    store.recordProposal(
+      job.id,
+      job.eventId,
+      categoryProposal(0.7),
+      metadata(),
+      start,
+    );
+    store.recordEvaluation(
+      job.id,
+      job.eventId,
+      {
+        disposition: 'review',
+        issueCodes: ['classification-uncertain'],
+      },
+      'Which category should I use for Cable?',
+      start,
+    );
+    const firstClaim = store.claimNextJob(start)!;
+    expect(firstClaim.attemptCount).toBe(1);
+    store.deferTalkJobWithoutAttempt(firstClaim.id, expired);
+    expect(store.claimNextJob(start)).toBeUndefined();
+    expect(store.claimNextJob(expired)).toMatchObject({
+      kind: 'send-receipt-categorization-clarification',
+      attemptCount: 1,
+    });
+    store.close();
+  });
+
   it('records a non-actionable attention result without a clarification job', () => {
     const store = new ReceiptCategorizationStore(':memory:');
     store.recordCanonical(source());

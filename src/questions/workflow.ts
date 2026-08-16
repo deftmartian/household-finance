@@ -884,6 +884,10 @@ export class FinanceQuestionWorkflow {
       currentDate,
       currentInstant,
     );
+    const unboundConfirmation =
+      /^(?:y|yes|n|no|approve|approved|reject|rejected|undo|confirm|confirmed|cancel)$/iu.test(
+        event.question.normalize('NFC').trim(),
+      );
     let run;
     try {
       run = await this.#agent.answer(
@@ -909,14 +913,25 @@ export class FinanceQuestionWorkflow {
             reserveStateChange: (
               toolName: string,
               toolInput: unknown,
-            ): boolean =>
-              this.#store.reserveStateChangingToolCall(
+            ): boolean => {
+              const now = this.#now().toISOString();
+              if (unboundConfirmation) {
+                this.#store.denyStateChangingToolCall(
+                  event.id,
+                  toolName,
+                  'unbound-confirmation',
+                  now,
+                );
+                return false;
+              }
+              return this.#store.reserveStateChangingToolCall(
                 event.id,
                 toolName,
                 toolInput,
-                this.#now().toISOString(),
+                now,
                 5,
-              ),
+              );
+            },
           },
         },
         this.#signal,

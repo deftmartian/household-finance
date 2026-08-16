@@ -103,6 +103,9 @@ export interface TransactionCategorizationWorkflowOptions {
   readonly updateSink: TransactionCategoryUpdateSink;
   readonly talk: TransactionCategorizationTalkSender;
   readonly talkRoomToken: string;
+  readonly interactiveActivity?: {
+    hasPendingFirstResponse(roomToken: string): boolean;
+  };
   readonly specialCategoryAliases: TransactionSpecialCategoryAliases;
   readonly minimumAutoApplyConfidence?: number;
   readonly timeZone?: string;
@@ -201,6 +204,8 @@ export class TransactionCategorizationWorkflow {
   readonly #classifier: TransactionCategoryClassifier;
   readonly #updateSink: TransactionCategoryUpdateSink;
   readonly #talk: TransactionCategorizationTalkSender;
+  readonly #interactiveActivity:
+    TransactionCategorizationWorkflowOptions['interactiveActivity'] | undefined;
   readonly #talkRoomToken: string;
   readonly #specialCategoryAliases: TransactionSpecialCategoryAliases;
   readonly #minimumAutoApplyConfidence: number;
@@ -222,6 +227,7 @@ export class TransactionCategorizationWorkflow {
     this.#classifier = options.classifier;
     this.#updateSink = options.updateSink;
     this.#talk = options.talk;
+    this.#interactiveActivity = options.interactiveActivity;
     this.#talkRoomToken = z
       .string()
       .min(1)
@@ -620,6 +626,16 @@ export class TransactionCategorizationWorkflow {
     const payload = talkPayloadSchema.parse(
       job.payload,
     ) as TransactionCategorizationTalkPayload;
+    if (
+      this.#interactiveActivity?.hasPendingFirstResponse(payload.roomToken) ===
+      true
+    ) {
+      this.#store.deferTalkJobWithoutAttempt(
+        job.id,
+        new Date(this.#now().valueOf() + 1_000).toISOString(),
+      );
+      return;
+    }
     try {
       const delivered = await this.#talk.sendReplyWithIdentity({
         ...payload,
@@ -657,6 +673,7 @@ export class TransactionCategorizationWorkflow {
 export class TransactionCategorizationWorker {
   readonly #workflow: TransactionCategorizationWorkflow;
   #running: Promise<TransactionCategorizationRunResult> | undefined;
+  #outboxRunning: Promise<number> | undefined;
 
   constructor(workflow: TransactionCategorizationWorkflow) {
     this.#workflow = workflow;
@@ -667,5 +684,12 @@ export class TransactionCategorizationWorker {
       this.#running = undefined;
     });
     return this.#running;
+  }
+
+  kickOutbox(): Promise<number> {
+    this.#outboxRunning ??= this.#workflow.processAvailable().finally(() => {
+      this.#outboxRunning = undefined;
+    });
+    return this.#outboxRunning;
   }
 }

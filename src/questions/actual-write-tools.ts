@@ -332,6 +332,9 @@ function source(
   return {
     idempotencyKey: `finance-question-write/${digest}`,
     contextEventId: operationUuid(digest),
+    questionEventId: context.eventId,
+    backendUrl: context.backendUrl,
+    roomToken: context.roomToken,
     actorId: context.actorId,
     messageId: context.messageId,
     message: context.message,
@@ -578,6 +581,7 @@ export function conversationalActualWriteTools(
           const current =
             (await options.onIntentQueued?.(result.intent)) ?? result.intent;
           if (
+            result.replyOwnedByDurableInteraction === true ||
             current.status === 'awaiting-approval' ||
             current.status === 'failed'
           ) {

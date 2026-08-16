@@ -777,6 +777,49 @@ export class QuestionStore {
     return row === undefined ? undefined : toQuestionItem(row);
   }
 
+  hasPendingFirstResponse(roomTokenInput: string): boolean {
+    const roomToken = roomTokenInput.normalize('NFC').trim();
+    if (roomToken.length === 0 || roomToken.length > 500) {
+      throw new TypeError('roomToken is invalid');
+    }
+    return (
+      this.#database
+        .prepare(
+          `SELECT 1
+             FROM question_inbound_events AS inbound
+             JOIN question_items AS item ON item.event_id = inbound.id
+            WHERE inbound.room_token = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM question_outbox AS delivered
+                 WHERE delivered.event_id = inbound.id
+                   AND delivered.kind IN (
+                     'send-finance-question-acknowledgement',
+                     'send-finance-question-talk-reply'
+                   )
+                   AND delivered.state = 'completed'
+                   AND NOT (
+                     delivered.kind = 'send-finance-question-acknowledgement'
+                     AND delivered.last_error = 'superseded-by-terminal-reply'
+                   )
+              )
+              AND (
+                item.status = 'received'
+                OR EXISTS (
+                  SELECT 1 FROM question_outbox AS pending
+                   WHERE pending.event_id = inbound.id
+                     AND pending.kind IN (
+                       'send-finance-question-acknowledgement',
+                       'send-finance-question-talk-reply'
+                     )
+                     AND pending.state IN ('pending', 'processing')
+                )
+              )
+            LIMIT 1`,
+        )
+        .get(roomToken) !== undefined
+    );
+  }
+
   reserveStateChangingToolCall(
     eventId: string,
     toolNameInput: string,
@@ -833,6 +876,28 @@ export class QuestionStore {
       );
       return true;
     })();
+  }
+
+  denyStateChangingToolCall(
+    eventIdInput: string,
+    toolNameInput: string,
+    reasonCodeInput: 'unbound-confirmation',
+    now: string,
+  ): void {
+    const eventId = eventIdInput.normalize('NFC').trim();
+    if (eventId.length === 0 || eventId.length > 500) {
+      throw new TypeError('eventId is invalid');
+    }
+    const toolName = toolNameInput.normalize('NFC').trim();
+    if (!/^[a-z][a-z0-9_]{0,99}$/u.test(toolName)) {
+      throw new TypeError('toolName is invalid');
+    }
+    this.#appendAudit(
+      eventId,
+      'question.state-change-denied',
+      { toolName, reasonCode: reasonCodeInput },
+      now,
+    );
   }
 
   recentCompletedConversationInputs(
@@ -901,6 +966,7 @@ export class QuestionStore {
   ): void {
     this.#database.transaction(() => {
       this.#completeQuestion(eventId, plan, result, metadata, answer, now);
+      this.#suppressPendingAcknowledgement(eventId, now);
       this.#enqueue(
         'send-finance-question-talk-reply',
         eventId,
@@ -922,6 +988,7 @@ export class QuestionStore {
   ): void {
     this.#database.transaction(() => {
       this.#completeQuestion(eventId, plan, result, metadata, answer, now);
+      this.#suppressPendingAcknowledgement(eventId, now);
       const completed = this.#database
         .prepare(
           `UPDATE question_outbox
@@ -989,6 +1056,7 @@ export class QuestionStore {
         throw new Error('Question processing outbox job is not claimed');
       }
       this.markFailed(eventId, errorCode, now, diagnostic);
+      this.#suppressPendingAcknowledgement(eventId, now);
       this.#enqueue(
         'send-finance-question-talk-reply',
         eventId,
@@ -1304,8 +1372,8 @@ export class QuestionStore {
             WHERE state = 'pending' AND available_at <= ?
             ORDER BY
               CASE kind
-                WHEN 'send-finance-question-acknowledgement' THEN 0
-                WHEN 'process-finance-question' THEN 1
+                WHEN 'send-finance-question-talk-reply' THEN 0
+                WHEN 'send-finance-question-acknowledgement' THEN 1
                 ELSE 2
               END,
               id
@@ -1584,6 +1652,29 @@ export class QuestionStore {
         now,
         now,
       );
+  }
+
+  #suppressPendingAcknowledgement(eventId: string, now: string): void {
+    const changed = this.#database
+      .prepare(
+        `UPDATE question_outbox
+            SET state = 'completed',
+                completed_at = ?,
+                locked_at = NULL,
+                last_error = 'superseded-by-terminal-reply'
+          WHERE event_id = ?
+            AND kind = 'send-finance-question-acknowledgement'
+            AND state = 'pending'`,
+      )
+      .run(now, eventId);
+    if (changed.changes > 0) {
+      this.#appendAudit(
+        eventId,
+        'question.acknowledgement-suppressed',
+        { reasonCode: 'superseded-by-terminal-reply' },
+        now,
+      );
+    }
   }
 
   #appendAudit(

@@ -14,6 +14,7 @@ import {
   ActualUpdateLeaseError,
   type ActualUpdateApprovalInput,
   type ActualUpdateApplyClaim,
+  type CreateActualUpdateConversationalOrigin,
   type ActualUpdateInternalEnvelopePayloadV2,
   type ActualUpdateIntentStore,
   type ActualUpdateLeaseRecoveryResult,
@@ -384,11 +385,18 @@ export class ActualUpdateWorkflow {
     this.#now = options.now ?? (() => new Date());
   }
 
-  enqueue(payload: ActualUpdateInternalEnvelopePayloadV2): {
+  enqueue(
+    payload: ActualUpdateInternalEnvelopePayloadV2,
+    origin?: CreateActualUpdateConversationalOrigin,
+  ): {
     readonly inserted: boolean;
     readonly intent: ActualUpdatePublicIntent;
+    readonly conversationalOriginRecorded?: boolean;
   } {
-    return this.#store.createSealedIntent(this.#authenticator.seal(payload));
+    return this.#store.createSealedIntent(
+      this.#authenticator.seal(payload),
+      origin,
+    );
   }
 
   approve(input: ActualUpdateApprovalInput): {

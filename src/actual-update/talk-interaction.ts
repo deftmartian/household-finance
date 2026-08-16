@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { ApprovalDecision } from '../approval/decision.js';
 import type {
+  ActualUpdateConversationalOrigin,
   ActualUpdateIntentStore,
   ActualUpdateOperationalStatus,
   ActualUpdatePublicIntent,
@@ -154,11 +155,13 @@ export function renderActualUpdateOutcomeMessage(
   outcomeStatus: ActualUpdateTalkOutcomeStatus,
 ): string {
   const heading =
-    outcomeStatus === 'applied'
-      ? 'Done — I updated this transaction in Actual.'
-      : outcomeStatus === 'rejected'
-        ? 'Okay — I left this transaction unchanged.'
-        : "I couldn't confirm the change, so I left this transaction for review.";
+    intent.status === 'ambiguous'
+      ? "I couldn't verify whether this change reached Actual after retrying safely, so it needs review before any further change."
+      : outcomeStatus === 'applied'
+        ? 'Done — I updated this transaction in Actual.'
+        : outcomeStatus === 'rejected'
+          ? 'Okay — I left this transaction unchanged.'
+          : "I couldn't confirm the change, so I left this transaction for review.";
   return [
     heading,
     '',
@@ -173,6 +176,9 @@ export function renderActualUpdateAutoOutcomeMessage(
 ): string {
   const summary = intent.proposal.summary;
   const transaction = `${money(summary.amountMinorUnits)} transaction from ${summary.payeeName ?? 'an unknown payee'}`;
+  if (intent.status === 'ambiguous') {
+    return `I couldn't verify whether the ${transaction} was categorized in Actual after retrying safely, so it needs review before any further change.`;
+  }
   if (outcomeStatus === 'failed') {
     return `I couldn't safely categorize the ${transaction}, so I left it for review.`;
   }
@@ -184,6 +190,13 @@ export function renderActualUpdateAutoOutcomeMessage(
   const verb =
     intent.applyOutcome?.status === 'already-applied' ? 'Confirmed' : 'Done';
   return `${verb} — I categorized the ${transaction} as ${label} in Actual.\n\n${UNDO_REPLY_INSTRUCTION}`;
+}
+
+export function renderActualUpdateProgressMessage(
+  intent: ActualUpdatePublicIntent,
+): string {
+  const summary = intent.proposal.summary;
+  return `I’m still safely applying the categorization for the ${money(summary.amountMinorUnits)} transaction from ${summary.payeeName ?? 'an unknown payee'}. I’ll confirm the result here.`;
 }
 
 export function actualUpdateTalkReferenceId(input: {
@@ -211,6 +224,25 @@ function deliveryIdempotencyKey(input: {
     '\0',
     input.proposalIdempotencyKey,
   );
+}
+
+function progressDeliveryIdentity(intentId: string): {
+  readonly referenceId: string;
+  readonly idempotencyKey: string;
+} {
+  const referenceId = sha256(
+    'household-finance.actual-update-talk-progress-reference.v1\0',
+    intentId,
+  );
+  return {
+    referenceId,
+    idempotencyKey: sha256(
+      'household-finance.actual-update-talk-progress-delivery.v1\0',
+      referenceId,
+      '\0',
+      intentId,
+    ),
+  };
 }
 
 function outcomeDeliveryIdentity(input: {
@@ -250,6 +282,10 @@ export interface ActualUpdateTalkIntentSource {
     order?: 'oldest' | 'newest',
     offset?: number,
   ): readonly ActualUpdatePublicIntent[];
+  getConversationalOrigin?(
+    intentId: string,
+  ): ActualUpdateConversationalOrigin | undefined;
+  isApplyReconciliationExhausted?(intentId: string): boolean;
 }
 
 type InteractionWorkflow = Pick<
@@ -276,6 +312,14 @@ export type ActualUpdateTalkWorkerStep =
         | 'outcome-already-delivered'
         | 'outcome-delivery-deferred'
         | 'outcome-delivery-failed';
+    }
+  | {
+      readonly intentId: string;
+      readonly status:
+        | 'progress-delivered'
+        | 'progress-delivery-deferred'
+        | 'progress-delivery-failed'
+        | 'progress-suppressed';
     }
   | {
       readonly intentId: string;
@@ -357,6 +401,7 @@ export class ActualUpdateTalkInteractionWorker {
     }
     const steps: ActualUpdateTalkWorkerStep[] =
       await this.#reconcileOutcomeDeliveries(maximum);
+    steps.push(...(await this.#reconcileProgressDeliveries(maximum)));
     const intents = [
       ...this.#intents.listPublicIntentsByStatus('awaiting-approval', maximum),
     ].sort((left, right) => {
@@ -390,6 +435,22 @@ export class ActualUpdateTalkInteractionWorker {
           actorId: plan.actorId,
           approvedAt: plan.approvedAt,
         });
+        const origin = this.#origin(intent.proposal.intentId);
+        if (origin !== undefined) {
+          const identity = progressDeliveryIdentity(intent.proposal.intentId);
+          this.#store.planProgressDelivery({
+            intentId: intent.proposal.intentId,
+            deliveryIdempotencyKey: identity.idempotencyKey,
+            roomToken: origin.roomToken,
+            replyTo: origin.sourceMessageId,
+            referenceId: identity.referenceId,
+            message: renderActualUpdateProgressMessage(intent),
+            createdAt: plan.approvedAt,
+            availableAt: new Date(
+              Date.parse(plan.approvedAt) + 5_000,
+            ).toISOString(),
+          });
+        }
         steps.push({
           intentId: intent.proposal.intentId,
           status: 'auto-approved',
@@ -404,7 +465,12 @@ export class ActualUpdateTalkInteractionWorker {
   async #reconcileOutcomeDeliveries(
     maximum: number,
   ): Promise<ActualUpdateTalkWorkerStep[]> {
-    const outcomeStatuses = ['applied', 'rejected', 'failed'] as const;
+    const outcomeStatuses = [
+      'applied',
+      'rejected',
+      'failed',
+      'ambiguous',
+    ] as const;
     const intents = outcomeStatuses
       .flatMap((status) => this.#outcomeCandidates(status, maximum))
       .sort((left, right) => {
@@ -433,7 +499,7 @@ export class ActualUpdateTalkInteractionWorker {
   #outcomeCandidates(
     status: Extract<
       ActualUpdateOperationalStatus,
-      'applied' | 'rejected' | 'failed'
+      'applied' | 'rejected' | 'failed' | 'ambiguous'
     >,
     maximum: number,
   ): ActualUpdatePublicIntent[] {
@@ -472,13 +538,32 @@ export class ActualUpdateTalkInteractionWorker {
     ) {
       return false;
     }
+    if (intent.status === 'ambiguous') {
+      return (
+        this.#origin(intent.proposal.intentId) !== undefined &&
+        this.#intents.isApplyReconciliationExhausted?.(
+          intent.proposal.intentId,
+        ) === true &&
+        this.#store.getDelivery(intent.proposal.intentId)?.state === 'delivered'
+      );
+    }
     return (
       this.#store.getDelivery(intent.proposal.intentId)?.state === 'delivered'
     );
   }
 
   #eligibleAutoOutcome(intent: ActualUpdatePublicIntent): boolean {
-    if (intent.status !== 'applied' && intent.status !== 'failed') {
+    if (
+      intent.status !== 'applied' &&
+      intent.status !== 'failed' &&
+      !(
+        intent.status === 'ambiguous' &&
+        this.#origin(intent.proposal.intentId) !== undefined &&
+        this.#intents.isApplyReconciliationExhausted?.(
+          intent.proposal.intentId,
+        ) === true
+      )
+    ) {
       return false;
     }
     if (
@@ -495,6 +580,72 @@ export class ActualUpdateTalkInteractionWorker {
       autoApproval !== undefined &&
       (marker !== undefined || delivery === undefined)
     );
+  }
+
+  #origin(intentId: string): ActualUpdateConversationalOrigin | undefined {
+    const origin = this.#intents.getConversationalOrigin?.(intentId);
+    if (
+      origin === undefined ||
+      origin.backendUrl !== this.#backendUrl ||
+      origin.roomToken !== this.#roomToken
+    ) {
+      return undefined;
+    }
+    return origin;
+  }
+
+  async #reconcileProgressDeliveries(
+    maximum: number,
+  ): Promise<ActualUpdateTalkWorkerStep[]> {
+    const now = canonicalInstant(this.#now);
+    const steps: ActualUpdateTalkWorkerStep[] = [];
+    for (const intentId of this.#store.listDueProgressIntentIds(now, maximum)) {
+      const intent = this.#intents.getPublicIntent(intentId);
+      if (
+        intent === undefined ||
+        intent.status === 'applied' ||
+        intent.status === 'failed' ||
+        intent.status === 'rejected' ||
+        (intent.status === 'ambiguous' &&
+          this.#intents.isApplyReconciliationExhausted?.(intentId) === true)
+      ) {
+        this.#store.suppressProgressDelivery(intentId);
+        steps.push({ intentId, status: 'progress-suppressed' });
+        continue;
+      }
+      const claim = this.#store.claimProgressDelivery(intentId, now);
+      if (claim === undefined) {
+        steps.push({ intentId, status: 'progress-delivery-deferred' });
+        continue;
+      }
+      try {
+        const identity = await this.#talk.sendReplyWithIdentity({
+          roomToken: claim.roomToken,
+          message: claim.message,
+          replyTo: claim.replyTo,
+          referenceId: claim.referenceId,
+        });
+        this.#store.completeProgressDelivery(
+          intentId,
+          claim.leaseToken,
+          identity,
+          canonicalInstant(this.#now),
+        );
+        steps.push({ intentId, status: 'progress-delivered' });
+      } catch {
+        this.#store.retryProgressDelivery(
+          intentId,
+          claim.leaseToken,
+          'talk-progress-delivery-failed',
+          new Date(
+            Date.parse(canonicalInstant(this.#now)) +
+              this.#deliveryRetryDelayMs,
+          ).toISOString(),
+        );
+        steps.push({ intentId, status: 'progress-delivery-failed' });
+      }
+    }
+    return steps;
   }
 
   async #deliverApprovalRequest(
@@ -541,9 +692,11 @@ export class ActualUpdateTalkInteractionWorker {
       return { intentId, status: 'delivery-deferred' };
     }
     try {
+      const origin = this.#origin(intentId);
       const identity = await this.#talk.sendReplyWithIdentity({
         roomToken: claim.roomToken,
         message: claim.message,
+        ...(origin === undefined ? {} : { replyTo: origin.sourceMessageId }),
         referenceId: claim.referenceId,
       });
       this.#store.completeDelivery(
@@ -576,10 +729,17 @@ export class ActualUpdateTalkInteractionWorker {
     intent: ActualUpdatePublicIntent,
   ): Promise<ActualUpdateTalkWorkerStep> {
     const outcomeStatus = intent.status;
-    if (outcomeStatus !== 'applied' && outcomeStatus !== 'failed') {
+    if (
+      outcomeStatus !== 'applied' &&
+      outcomeStatus !== 'failed' &&
+      outcomeStatus !== 'ambiguous'
+    ) {
       throw new Error('Standalone Actual update outcome is not terminal');
     }
+    const deliveryOutcomeStatus =
+      outcomeStatus === 'applied' ? 'applied' : 'failed';
     const intentId = intent.proposal.intentId;
+    this.#store.suppressProgressDelivery(intentId);
     let delivery = this.#store.getDelivery(intentId);
     const marker = this.#store.getAutoOutcomeStatus(intentId);
     if (delivery === undefined || marker === undefined) {
@@ -590,7 +750,7 @@ export class ActualUpdateTalkInteractionWorker {
       });
       delivery = this.#store.planAutoOutcomeDelivery({
         intentId,
-        outcomeStatus,
+        outcomeStatus: deliveryOutcomeStatus,
         deliveryIdempotencyKey: deliveryIdempotencyKey({
           referenceId,
           proposalIdempotencyKey: intent.proposal.idempotencyKey,
@@ -598,11 +758,14 @@ export class ActualUpdateTalkInteractionWorker {
         backendUrl: this.#backendUrl,
         roomToken: this.#roomToken,
         referenceId,
-        message: renderActualUpdateAutoOutcomeMessage(intent, outcomeStatus),
+        message: renderActualUpdateAutoOutcomeMessage(
+          intent,
+          deliveryOutcomeStatus,
+        ),
         createdAt: intent.updatedAt,
       }).delivery;
     } else if (
-      marker !== outcomeStatus ||
+      marker !== deliveryOutcomeStatus ||
       delivery.backendUrl !== this.#backendUrl ||
       delivery.roomToken !== this.#roomToken
     ) {
@@ -619,9 +782,11 @@ export class ActualUpdateTalkInteractionWorker {
       return { intentId, status: 'outcome-delivery-deferred' };
     }
     try {
+      const origin = this.#origin(intentId);
       const identity = await this.#talk.sendReplyWithIdentity({
         roomToken: claim.roomToken,
         message: claim.message,
+        ...(origin === undefined ? {} : { replyTo: origin.sourceMessageId }),
         referenceId: claim.referenceId,
       });
       this.#store.completeDelivery(
@@ -653,10 +818,13 @@ export class ActualUpdateTalkInteractionWorker {
     if (
       outcomeStatus !== 'applied' &&
       outcomeStatus !== 'rejected' &&
-      outcomeStatus !== 'failed'
+      outcomeStatus !== 'failed' &&
+      outcomeStatus !== 'ambiguous'
     ) {
       throw new Error('Actual update outcome delivery received a live intent');
     }
+    const deliveryOutcomeStatus =
+      outcomeStatus === 'ambiguous' ? 'failed' : outcomeStatus;
     const intentId = intent.proposal.intentId;
     let delivery = this.#store.getOutcomeDelivery(intentId);
     if (delivery === undefined) {
@@ -664,17 +832,20 @@ export class ActualUpdateTalkInteractionWorker {
         backendUrl: this.#backendUrl,
         roomToken: this.#roomToken,
         proposalIdempotencyKey: intent.proposal.idempotencyKey,
-        outcomeStatus,
+        outcomeStatus: deliveryOutcomeStatus,
       });
       delivery = this.#store.planOutcomeDelivery({
         intentId,
-        outcomeStatus,
+        outcomeStatus: deliveryOutcomeStatus,
         deliveryIdempotencyKey: identity.idempotencyKey,
         referenceId: identity.referenceId,
-        message: renderActualUpdateOutcomeMessage(intent, outcomeStatus),
+        message: renderActualUpdateOutcomeMessage(
+          intent,
+          deliveryOutcomeStatus,
+        ),
         createdAt: intent.updatedAt,
       }).delivery;
-    } else if (delivery.outcomeStatus !== outcomeStatus) {
+    } else if (delivery.outcomeStatus !== deliveryOutcomeStatus) {
       throw new Error(
         'Persisted Actual update Talk outcome conflicts with intent state',
       );

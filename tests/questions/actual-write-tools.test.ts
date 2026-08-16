@@ -145,6 +145,9 @@ describe('conversational Actual write tool', () => {
         contextEventId: expect.stringMatching(
           /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
         ),
+        questionEventId: actionContext.eventId,
+        backendUrl: actionContext.backendUrl,
+        roomToken: actionContext.roomToken,
         actorId: 'alex',
         messageId: '34084',
         message: actionContext.message,
@@ -230,6 +233,37 @@ describe('conversational Actual write tool', () => {
         },
       }),
     ).resolves.toMatchObject({ status: 'needs-approval' });
+    expect(tool!.didHandleTalkReply?.()).toBe(true);
+  });
+
+  it('lets a durable automatic progress/outcome route own a new edit reply', async () => {
+    const [tool] = conversationalActualWriteTools({
+      adapter: {
+        apply: async () => ({
+          inserted: true,
+          intent: intent('awaiting-approval'),
+          replyOwnedByDurableInteraction: true,
+        }),
+      },
+      taxonomySource: { read: async () => taxonomy },
+      profileSource: { read: async () => undefined },
+      actionContext,
+      onIntentQueued: async () => intent('queued'),
+    });
+
+    await expect(
+      tool!.execute({
+        selector: {
+          date: '2026-07-14',
+          amountMinorUnits: -48_966,
+          payeeName: 'Traders Insurance',
+        },
+        categorization: {
+          kind: 'single',
+          categoryName: 'Home Insurance',
+        },
+      }),
+    ).resolves.toMatchObject({ status: 'queued' });
     expect(tool!.didHandleTalkReply?.()).toBe(true);
   });
 

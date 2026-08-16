@@ -212,6 +212,25 @@ export interface ActualUpdatePublicIntent {
   readonly updatedAt: string;
 }
 
+/**
+ * Durable, non-model-facing origin for a conversational update. Legacy and
+ * non-conversational intents intentionally have no row.
+ */
+export interface ActualUpdateConversationalOrigin {
+  readonly intentId: string;
+  readonly questionEventId: string;
+  readonly backendUrl: string;
+  readonly roomToken: string;
+  readonly actorId: string;
+  readonly sourceMessageId: string;
+  readonly receivedAt: string;
+}
+
+export type CreateActualUpdateConversationalOrigin = Omit<
+  ActualUpdateConversationalOrigin,
+  'intentId'
+>;
+
 export interface ActualUpdateApprovalInput {
   readonly intentId: string;
   readonly decisionId: string;
@@ -335,6 +354,16 @@ interface StateRow {
   updated_at: string;
 }
 
+interface ConversationalOriginRow {
+  intent_id: string;
+  question_event_id: string;
+  backend_url: string;
+  room_token: string;
+  actor_id: string;
+  source_message_id: string;
+  received_at: string;
+}
+
 interface DecisionRow {
   intent_id: string;
   decision_id: string;
@@ -397,6 +426,28 @@ const actualUpdateStoreSchema = `
   BEFORE DELETE ON actual_update_intents
   BEGIN
     SELECT RAISE(ABORT, 'actual update intents are immutable');
+  END;
+
+  CREATE TABLE IF NOT EXISTS actual_update_conversational_origins (
+    intent_id TEXT PRIMARY KEY REFERENCES actual_update_intents(intent_id),
+    question_event_id TEXT NOT NULL,
+    backend_url TEXT NOT NULL,
+    room_token TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    received_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TRIGGER IF NOT EXISTS actual_update_conversational_origins_no_update
+  BEFORE UPDATE ON actual_update_conversational_origins
+  BEGIN
+    SELECT RAISE(ABORT, 'actual update conversational origins are immutable');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS actual_update_conversational_origins_no_delete
+  BEFORE DELETE ON actual_update_conversational_origins
+  BEGIN
+    SELECT RAISE(ABORT, 'actual update conversational origins are immutable');
   END;
 
   CREATE TABLE IF NOT EXISTS actual_update_decisions (
@@ -550,6 +601,21 @@ function normalizedInstant(value: string, name: string): string {
     throw new TypeError(`${name} must be a canonical ISO-8601 UTC instant`);
   }
   return parsed.data;
+}
+
+function normalizedBackendUrl(value: string): string {
+  const parsed = new URL(value);
+  if (
+    (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.search !== '' ||
+    parsed.hash !== ''
+  ) {
+    throw new TypeError('backendUrl is invalid');
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/u, '');
+  return parsed.toString().replace(/\/$/u, '');
 }
 
 function identifier(value: string, name: string): string {
@@ -849,9 +915,13 @@ export class ActualUpdateIntentStore {
    * Internal ingress only. Normal integration should call
    * ActualUpdateWorkflow.enqueue(), which seals the payload before persistence.
    */
-  createSealedIntent(envelopeInput: SealedActualUpdateIntentEnvelopeV2): {
+  createSealedIntent(
+    envelopeInput: SealedActualUpdateIntentEnvelopeV2,
+    originInput?: CreateActualUpdateConversationalOrigin,
+  ): {
     readonly inserted: boolean;
     readonly intent: ActualUpdatePublicIntent;
+    readonly conversationalOriginRecorded?: boolean;
   } {
     const envelope = parseSealedActualUpdateEnvelope(envelopeInput);
     const proposal = envelope.payload.publicProposal;
@@ -865,11 +935,29 @@ export class ActualUpdateIntentStore {
       'sealed Actual update envelope',
     );
     const digest = envelopeDigest(envelopeJson);
+    const origin =
+      originInput === undefined
+        ? undefined
+        : {
+            questionEventId: identifier(
+              originInput.questionEventId,
+              'questionEventId',
+            ),
+            backendUrl: normalizedBackendUrl(originInput.backendUrl),
+            roomToken: identifier(originInput.roomToken, 'roomToken'),
+            actorId: identifier(originInput.actorId, 'actorId'),
+            sourceMessageId: identifier(
+              originInput.sourceMessageId,
+              'sourceMessageId',
+            ),
+            receivedAt: normalizedInstant(originInput.receivedAt, 'receivedAt'),
+          };
 
     return this.#database.transaction(
       (): {
         readonly inserted: boolean;
         readonly intent: ActualUpdatePublicIntent;
+        readonly conversationalOriginRecorded?: boolean;
       } => {
         const existing = this.#database
           .prepare(
@@ -896,7 +984,32 @@ export class ActualUpdateIntentStore {
           if (intent === undefined) {
             throw new Error('Existing Actual update state is missing');
           }
-          return { inserted: false, intent };
+          const recordedOrigin = this.getConversationalOrigin(
+            proposal.intentId,
+          );
+          if (
+            origin !== undefined &&
+            recordedOrigin !== undefined &&
+            (recordedOrigin.questionEventId !== origin.questionEventId ||
+              recordedOrigin.backendUrl !== origin.backendUrl ||
+              recordedOrigin.roomToken !== origin.roomToken ||
+              recordedOrigin.actorId !== origin.actorId ||
+              recordedOrigin.sourceMessageId !== origin.sourceMessageId ||
+              recordedOrigin.receivedAt !== origin.receivedAt)
+          ) {
+            throw new ActualUpdateStoreConflictError(
+              'Actual update conversational origin was replayed differently',
+            );
+          }
+          return {
+            inserted: false,
+            intent,
+            ...(origin === undefined
+              ? {}
+              : {
+                  conversationalOriginRecorded: recordedOrigin !== undefined,
+                }),
+          };
         }
 
         if (this.#hasTargetLock(proposal.targetRef, proposal.intentId)) {
@@ -938,6 +1051,24 @@ export class ActualUpdateIntentStore {
            ) VALUES (?, 'awaiting-approval', 0, 0, NULL, NULL, NULL, NULL, NULL, ?)`,
           )
           .run(proposal.intentId, proposal.createdAt);
+        if (origin !== undefined) {
+          this.#database
+            .prepare(
+              `INSERT INTO actual_update_conversational_origins (
+                 intent_id, question_event_id, backend_url, room_token,
+                 actor_id, source_message_id, received_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              proposal.intentId,
+              origin.questionEventId,
+              origin.backendUrl,
+              origin.roomToken,
+              origin.actorId,
+              origin.sourceMessageId,
+              origin.receivedAt,
+            );
+        }
         this.#appendAudit(
           proposal.intentId,
           'actual-update.intent-created',
@@ -953,13 +1084,55 @@ export class ActualUpdateIntentStore {
         if (intent === undefined) {
           throw new Error('Actual update intent was not persisted');
         }
-        return { inserted: true, intent };
+        return {
+          inserted: true,
+          intent,
+          ...(origin === undefined
+            ? {}
+            : { conversationalOriginRecorded: true }),
+        };
       },
     )();
   }
 
   getPublicIntent(intentIdInput: string): ActualUpdatePublicIntent | undefined {
     return this.#getPublicIntent(identifier(intentIdInput, 'intentId'));
+  }
+
+  getConversationalOrigin(
+    intentIdInput: string,
+  ): ActualUpdateConversationalOrigin | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT *
+           FROM actual_update_conversational_origins
+          WHERE intent_id = ?`,
+      )
+      .get(identifier(intentIdInput, 'intentId')) as
+      ConversationalOriginRow | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          intentId: row.intent_id,
+          questionEventId: row.question_event_id,
+          backendUrl: row.backend_url,
+          roomToken: row.room_token,
+          actorId: row.actor_id,
+          sourceMessageId: row.source_message_id,
+          receivedAt: row.received_at,
+        };
+  }
+
+  isApplyReconciliationExhausted(intentIdInput: string): boolean {
+    const row = this.#database
+      .prepare(
+        `SELECT status, available_at
+           FROM actual_update_state
+          WHERE intent_id = ?`,
+      )
+      .get(identifier(intentIdInput, 'intentId')) as
+      Pick<StateRow, 'status' | 'available_at'> | undefined;
+    return row?.status === 'ambiguous' && row.available_at === null;
   }
 
   listPublicIntentsByStatus(

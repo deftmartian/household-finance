@@ -255,6 +255,48 @@ describe('Actual update durable intent store', () => {
     auth.destroy();
   });
 
+  it('atomically records new conversational origins without adopting legacy intents', () => {
+    const auth = authenticator();
+    const origin = {
+      questionEventId: '11111111-1111-4111-8111-111111111111',
+      backendUrl: 'https://cloud.example.test',
+      roomToken: 'household-finance',
+      actorId: 'alex',
+      sourceMessageId: '42',
+      receivedAt: firstInstant,
+    };
+    const store = new ActualUpdateIntentStore(':memory:');
+    const sealed = auth.seal(payload(auth));
+
+    expect(store.createSealedIntent(sealed, origin)).toMatchObject({
+      inserted: true,
+      conversationalOriginRecorded: true,
+    });
+    expect(store.getConversationalOrigin('intent-1')).toEqual({
+      intentId: 'intent-1',
+      ...origin,
+    });
+    expect(() =>
+      store.createSealedIntent(sealed, {
+        ...origin,
+        sourceMessageId: '43',
+      }),
+    ).toThrowError(
+      'Actual update conversational origin was replayed differently',
+    );
+    store.close();
+
+    const legacy = new ActualUpdateIntentStore(':memory:');
+    legacy.createSealedIntent(sealed);
+    expect(legacy.createSealedIntent(sealed, origin)).toMatchObject({
+      inserted: false,
+      conversationalOriginRecorded: false,
+    });
+    expect(legacy.getConversationalOrigin('intent-1')).toBeUndefined();
+    legacy.close();
+    auth.destroy();
+  });
+
   it('preserves exact replay but locks one target through the apply boundary', () => {
     const auth = authenticator();
     const store = new ActualUpdateIntentStore(':memory:');
@@ -585,6 +627,46 @@ describe('Actual update durable intent store', () => {
       'Another update for this transaction is still in progress',
     );
     undoStore.close();
+    auth.destroy();
+  });
+
+  it('exposes ambiguity only after safe apply reconciliation retries are exhausted', () => {
+    const auth = authenticator();
+    const store = new ActualUpdateIntentStore(':memory:', {
+      retryDelaysMs: [0],
+    });
+    const input = payload(auth);
+    store.createSealedIntent(auth.seal(input));
+    store.approve({
+      intentId: 'intent-1',
+      decisionId: 'approval-1',
+      actorId: 'alex',
+      approvedAt: secondInstant,
+    });
+    const first = store.claimNextApply(secondInstant)!;
+    store.markApplyApplying(first.intentId, first.leaseToken, secondInstant);
+    store.markApplyAmbiguous(
+      first.intentId,
+      first.leaseToken,
+      'readback-uncertain',
+      secondInstant,
+    );
+    expect(store.isApplyReconciliationExhausted('intent-1')).toBe(false);
+
+    const reconciliation = store.claimNextApply(secondInstant)!;
+    store.markApplyApplying(
+      reconciliation.intentId,
+      reconciliation.leaseToken,
+      secondInstant,
+    );
+    store.markApplyAmbiguous(
+      reconciliation.intentId,
+      reconciliation.leaseToken,
+      'readback-uncertain',
+      secondInstant,
+    );
+    expect(store.isApplyReconciliationExhausted('intent-1')).toBe(true);
+    store.close();
     auth.destroy();
   });
 
