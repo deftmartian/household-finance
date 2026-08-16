@@ -655,6 +655,14 @@ export function buildActiveReceiptRecord(
     ...bundle.receipt,
     lineItems: purchasedLineItems(bundle.receipt),
   });
+  // Actual owns the canonical receipt facts. Once a later canonical revision
+  // corrects the purchase date, replaying the same immutable source images
+  // must not restore the stale model extraction. A genuinely different source
+  // sequence still gets the newly extracted date below.
+  const purchaseDate =
+    sourceSequenceUnchanged && previous !== undefined
+      ? previous.purchaseDate
+      : receipt.purchaseDate.value;
   const sourceDocumentBlocked = bundle.sources.some(
     (source) =>
       source.receipt.documentDisposition === 'multiple-receipts' ||
@@ -732,7 +740,7 @@ export function buildActiveReceiptRecord(
     })),
     status: 'active',
     merchant: canonicalReceiptText(receipt.merchant.value),
-    purchaseDate: receipt.purchaseDate.value,
+    purchaseDate,
     purchaseTime: receipt.purchaseTime.value,
     timezoneOffset: receipt.timezoneOffset.value,
     currency: receipt.currency.value,

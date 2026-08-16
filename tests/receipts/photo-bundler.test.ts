@@ -817,6 +817,71 @@ describe('bundleReceiptPhotos', () => {
     });
   });
 
+  it('preserves a canonical date correction while sources are unchanged', () => {
+    const base = candidate(
+      1,
+      proposal({
+        merchant: 'Book Store',
+        date: '2014-08-26',
+        total: 24_99,
+        items: [['Picture book', 24_99]],
+      }),
+      '2026-08-14T12:00:00.000Z',
+    );
+    const extracted = buildActiveReceiptRecord(bundleReceiptPhotos([base])[0]!);
+    const corrected = {
+      ...extracted,
+      revision: extracted.revision + 1,
+      updatedAt: '2026-08-15T00:00:00.000Z',
+      purchaseDate: '2026-08-14',
+    };
+
+    const replayed = buildActiveReceiptRecord(
+      bundleReceiptPhotos([base])[0]!,
+      corrected,
+    );
+
+    expect(replayed.purchaseDate).toBe('2026-08-14');
+    expect(replayed.extraction.sourceSha256s).toEqual(
+      corrected.extraction.sourceSha256s,
+    );
+  });
+
+  it('accepts the extracted date when the source sequence changes', () => {
+    const original = candidate(
+      1,
+      proposal({
+        merchant: 'Book Store',
+        date: '2014-08-26',
+        total: 24_99,
+      }),
+      '2026-08-14T12:00:00.000Z',
+    );
+    const previous = buildActiveReceiptRecord(
+      bundleReceiptPhotos([original])[0]!,
+    );
+    const replacement = candidate(
+      2,
+      proposal({
+        merchant: 'Book Store',
+        date: '2026-08-14',
+        total: 24_99,
+      }),
+      '2026-08-15T12:00:00.000Z',
+    );
+
+    const replacementBundle = bundleReceiptPhotos([replacement])[0]!;
+    const revised = buildActiveReceiptRecord(
+      { ...replacementBundle, receiptId: previous.receiptId },
+      previous,
+    );
+
+    expect(revised.purchaseDate).toBe('2026-08-14');
+    expect(revised.extraction.sourceSha256s).toEqual([
+      replacement.sourceSha256,
+    ]);
+  });
+
   it('uses extraction order when a newer photo arrived before the prior revision finished', () => {
     const base = {
       ...candidate(
