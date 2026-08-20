@@ -38,7 +38,7 @@ function testConfig(overrides: TestConfigOverrides = {}): AppConfig {
     ...common,
     intakeMode: 'production',
     model: {
-      name: 'grok-4.5',
+      name: 'grok-4.6',
       reasoningEffort: 'high',
       apiKey: 'must-not-leak',
     },
@@ -126,6 +126,10 @@ function completeProductionDependencies(
         handled: false as const,
         reason: 'not-a-finance-interaction' as const,
       })),
+    },
+    operationalMetrics: {
+      status: vi.fn(() => ({ status: 'ok', queues: [] })),
+      prometheus: vi.fn(() => 'household_finance_build_info 1\n'),
     },
     ...overrides,
   };
@@ -314,6 +318,44 @@ describe('health endpoints', () => {
       intakeMode: 'production',
     });
     attachmentStore.close();
+  });
+
+  it('serves privacy-safe production status and Prometheus metrics separately from readiness', async () => {
+    const operationalMetrics = {
+      status: vi.fn(() => ({
+        status: 'degraded',
+        build: { model: 'grok-4.6', reasoningEffort: 'high' },
+        queues: [{ queue: 'questions', due: 1, processing: 0 }],
+      })),
+      prometheus: vi.fn(
+        () =>
+          'household_finance_build_info{model="grok-4.6",reasoning_effort="high"} 1\n',
+      ),
+    };
+    const server = createTestHttpServer(
+      testConfig({ intakeMode: 'production' }),
+      { operationalMetrics },
+    );
+    servers.push(server);
+    const port = await listen(server);
+
+    const status = await fetch(
+      `http://127.0.0.1:${String(port)}/health/status`,
+    );
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({
+      status: 'degraded',
+      build: { model: 'grok-4.6', reasoningEffort: 'high' },
+    });
+
+    const metrics = await fetch(`http://127.0.0.1:${String(port)}/metrics`);
+    expect(metrics.status).toBe(200);
+    expect(metrics.headers.get('content-type')).toBe(
+      'text/plain; version=0.0.4; charset=utf-8',
+    );
+    expect(await metrics.text()).toContain(
+      'household_finance_build_info{model="grok-4.6"',
+    );
   });
 
   it('routes a normalized signed file share only to the isolated attachment shadow store', async () => {

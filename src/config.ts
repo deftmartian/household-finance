@@ -35,7 +35,7 @@ const environmentSchema = z.object({
   MODEL_NAME: z
     .string()
     .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/)
-    .default('grok-4.5'),
+    .default('grok-4.6'),
   MODEL_REASONING_EFFORT: z.enum(['low', 'medium', 'high']).default('high'),
   XAI_API_KEY_FILE: z.string().min(1).default('/run/secrets/xai_api_key'),
   INTAKE_MODE: intakeModeFromEnvironment,

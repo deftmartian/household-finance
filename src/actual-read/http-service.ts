@@ -183,6 +183,42 @@ export function createActualReadHttpServer(
       // Reporting receives only fixed codes and is best-effort.
     }
   };
+  const compatibleOutput = (
+    request: IncomingMessage,
+    value: unknown,
+  ): unknown => {
+    if (
+      request.headers['x-household-finance-read-version'] === '2' ||
+      value === null ||
+      typeof value !== 'object' ||
+      Array.isArray(value)
+    ) {
+      return value;
+    }
+    const record = value as Readonly<Record<string, unknown>>;
+    const freshnessValue = record.freshness;
+    if (
+      freshnessValue === null ||
+      typeof freshnessValue !== 'object' ||
+      Array.isArray(freshnessValue)
+    ) {
+      return value;
+    }
+    const legacyFreshness: Record<string, unknown> = {
+      ...(freshnessValue as Readonly<Record<string, unknown>>),
+    };
+    delete legacyFreshness.lastAttemptSummary;
+    return {
+      ...record,
+      ...(record.outcome === 'partial' ? { outcome: 'failed' } : {}),
+      freshness: {
+        ...legacyFreshness,
+        ...(legacyFreshness.lastOutcome === 'partial'
+          ? { lastOutcome: 'failed' }
+          : {}),
+      },
+    };
+  };
   const handle = async (
     request: IncomingMessage,
     response: ServerResponse,
@@ -199,7 +235,10 @@ export function createActualReadHttpServer(
       sendJson(
         response,
         200,
-        validatedOutput(parseActualReadCatalog, await reader.catalog()),
+        compatibleOutput(
+          request,
+          validatedOutput(parseActualReadCatalog, await reader.catalog()),
+        ),
       );
       return;
     }
@@ -348,7 +387,7 @@ export function createActualReadHttpServer(
         sendJson(response, 404, { error: 'not_found' });
         return;
     }
-    sendJson(response, 200, result);
+    sendJson(response, 200, compatibleOutput(request, result));
   };
 
   const server = createServer(

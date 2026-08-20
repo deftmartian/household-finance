@@ -368,6 +368,16 @@ if ! jq -e '
   (.services["actual-writer"].networks | keys) == ["finance-internal"] and
   .networks["finance-internal"].internal == true and
   .services["actual-writer"].depends_on["actual-server"].condition == "service_healthy" and
+  .services["actual-writer"].healthcheck.test == [
+    "CMD",
+    "node",
+    "-e",
+    "fetch(\u0027http://127.0.0.1:4360/health/ready\u0027).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+  ] and
+  .services["actual-writer"].healthcheck.interval == "15s" and
+  .services["actual-writer"].healthcheck.timeout == "5s" and
+  .services["actual-writer"].healthcheck.start_period == "20s" and
+  .services["actual-writer"].healthcheck.retries == 4 and
   .services["actual-writer"].ports == null and
   .services["actual-writer"].expose == null and
   .services["actual-writer"].dns == null and

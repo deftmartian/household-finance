@@ -7,7 +7,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json tsconfig.build.json ./
@@ -17,7 +17,9 @@ RUN pnpm build \
 
 FROM node:24-bookworm-slim AS runtime-base
 
-ENV NODE_ENV=production
+ARG SOURCE_REVISION=unknown
+ENV NODE_ENV=production \
+    SOURCE_REVISION=${SOURCE_REVISION}
 WORKDIR /app
 
 COPY --from=build --chown=node:node /app/package.json ./
@@ -79,6 +81,7 @@ RUN rm -rf \
 RUN install -d -m 0750 -o node -g node /data /writer-data
 
 USER node
+EXPOSE 4360
 CMD ["node", "dist/actual-writer-service.js"]
 
 FROM runtime-base AS actual-reader-runtime

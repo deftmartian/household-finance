@@ -1743,19 +1743,38 @@ describe('Actual API read port', () => {
     now = new Date('2026-07-28T12:05:00.000Z');
     api.failBankSyncAccountId = 'account-daily';
     expect(await reader.syncNow()).toMatchObject({
-      outcome: 'failed',
+      outcome: 'partial',
       freshness: {
         lastAttemptAt: '2026-07-28T12:05:00.000Z',
         lastSuccessfulSyncAt: '2026-07-28T12:00:00.000Z',
-        lastOutcome: 'failed',
+        bankFeedAsOf: '2026-07-28T12:05:00.000Z',
+        lastOutcome: 'partial',
         isFresh: true,
+        lastAttemptSummary: {
+          attemptedAccountCount: 4,
+          succeededAccountCount: 3,
+          failedAccountCount: 1,
+          budgetRefreshSucceeded: true,
+        },
       },
     });
     expect(store.saves.at(-1)).toMatchObject({
       generation: 2,
-      state: 'failed',
+      state: 'partial',
     });
     expect(JSON.stringify(store.state)).not.toContain('account-daily');
+
+    now = new Date('2026-07-28T12:10:00.000Z');
+    api.failSync = true;
+    expect(await reader.syncNow()).toMatchObject({
+      outcome: 'failed',
+      freshness: {
+        lastOutcome: 'failed',
+        bankFeedAsOf: '2026-07-28T12:05:00.000Z',
+        lastSuccessfulSyncAt: '2026-07-28T12:00:00.000Z',
+        lastAttemptSummary: { budgetRefreshSucceeded: false },
+      },
+    });
   });
 
   it('keeps an operation watchdog armed while a serialized Actual call is hung', async () => {
@@ -1805,11 +1824,13 @@ describe('Actual API read port', () => {
 
   it('recovers an interrupted persisted sync as failed on restart', async () => {
     const store = new MemoryFreshnessStore({
-      schemaVersion: 'actual-read-freshness.v1',
+      schemaVersion: 'actual-read-freshness.v2',
       generation: 4,
       state: 'syncing',
       lastAttemptAt: '2026-07-28T11:00:00.000Z',
       lastSuccessfulSyncAt: '2026-07-28T10:00:00.000Z',
+      lastAnySuccessfulSyncAt: '2026-07-28T10:00:00.000Z',
+      lastAttemptSummary: null,
     });
     const { reader } = await initializedHarness({ store });
 

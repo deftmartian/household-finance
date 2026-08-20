@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { XaiStructuredClient } from '../../src/model/xai-structured-client.js';
 import type { XaiStructuredClientError } from '../../src/model/xai-structured-client.js';
 
-function response(value: unknown, zdr = true, model = 'grok-4.5'): Response {
+function response(value: unknown, zdr = true, model = 'grok-4.6'): Response {
   const body = JSON.stringify({
     status: 'completed',
     model,
@@ -32,7 +32,7 @@ function response(value: unknown, zdr = true, model = 'grok-4.5'): Response {
 function agentResponse(output: readonly unknown[], zdr = true): Response {
   const body = JSON.stringify({
     status: 'completed',
-    model: 'grok-4.5',
+    model: 'grok-4.6',
     output,
     usage: {
       input_tokens: 3,

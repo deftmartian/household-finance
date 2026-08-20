@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ActualWriterServiceLoop,
   assertActualUpdateCoreClient,
+  createActualWriterHealthServer,
   createActualWriterServiceLoop,
 } from '../src/actual-writer-service.js';
 import type { ActualWriterConfig } from '../src/actual-writer-config.js';
@@ -77,6 +78,45 @@ describe('scoped Actual writer service runtime', () => {
       'store:closed',
       'key:destroyed',
     ]);
+  });
+
+  it('reports writer readiness only after a completed cycle', async () => {
+    let now = Date.parse('2026-08-20T12:00:00.000Z');
+    const loop = new ActualWriterServiceLoop({
+      queues: [{ runOne: vi.fn(async () => false) }],
+      boundary: { shutdown: vi.fn(async () => undefined) },
+      stores: [],
+      authenticators: [],
+      pollIntervalMs: 60_000,
+      operationTimeoutMs: 10_000,
+      startWatchdog: noWatchdog,
+      now: () => now,
+    });
+    const server = createActualWriterHealthServer(loop);
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('Expected writer health TCP address');
+      }
+      const endpoint = `http://127.0.0.1:${String(address.port)}/health/ready`;
+      expect((await fetch(endpoint)).status).toBe(503);
+      await loop.start();
+      const ready = await fetch(endpoint);
+      expect(ready.status).toBe(200);
+      await expect(ready.json()).resolves.toMatchObject({
+        status: 'ready',
+        lastCompletedCycleAt: '2026-08-20T12:00:00.000Z',
+      });
+      now += 200_000;
+      expect((await fetch(endpoint)).status).toBe(503);
+      await loop.shutdown();
+    } finally {
+      server.close();
+      if (!loop.isShuttingDown) await loop.shutdown();
+    }
   });
 
   it('round-robins writer queues and falls through an idle queue', async () => {

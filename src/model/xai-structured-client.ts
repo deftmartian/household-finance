@@ -1,10 +1,16 @@
 import { z } from 'zod';
 
-const DEFAULT_BASE_URL = 'https://api.x.ai/v1';
-const DEFAULT_MODEL = 'grok-4.5';
-const DEFAULT_TIMEOUT_MS = 60_000;
+import {
+  XaiResponsesTransport,
+  XaiResponsesTransportError,
+  xaiZdrPreflightBody,
+} from './xai-responses-transport.js';
+
+const DEFAULT_MODEL = 'grok-4.6';
+const DEFAULT_TIMEOUT_MS = 180_000;
+const DEFAULT_OVERALL_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
-const DEFAULT_RETRY_BASE_DELAY_MS = 100;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_TOOL_OUTPUT_BYTES = 256 * 1024;
 const DEFAULT_MAX_FINAL_TEXT_CHARACTERS = 1_600;
@@ -14,16 +20,6 @@ const FINAL_AGENT_TURN_INSTRUCTION =
 const safeModelNamePattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const reasoningEfforts = ['low', 'medium', 'high'] as const;
 type ReasoningEffort = (typeof reasoningEfforts)[number];
-
-const preflightJsonSchema = {
-  $schema: 'https://json-schema.org/draft/2020-12/schema',
-  type: 'object',
-  properties: {
-    acknowledged: { const: true },
-  },
-  required: ['acknowledged'],
-  additionalProperties: false,
-} as const;
 
 const preflightAcknowledgementSchema = z.strictObject({
   acknowledged: z.literal(true),
@@ -179,6 +175,7 @@ export type XaiStructuredClientErrorCode =
 export type XaiStructuredClientResponseStage =
   | 'response-body'
   | 'response-envelope'
+  | 'model-mismatch'
   | 'response-usage'
   | 'structured-output'
   | 'agent-output'
@@ -223,16 +220,17 @@ export interface XaiStructuredClientOptions {
   readonly model?: string;
   readonly reasoningEffort?: ReasoningEffort;
   readonly timeoutMs?: number;
+  readonly overallTimeoutMs?: number;
   readonly maxAttempts?: number;
   readonly retryBaseDelayMs?: number;
   readonly fetchImplementation?: typeof fetch;
   readonly sleepImplementation?: (milliseconds: number) => Promise<void>;
   readonly now?: () => number;
-}
-
-interface RequestResult<T> {
-  readonly value: T;
-  readonly attempts: number;
+  readonly random?: () => number;
+  readonly onRunCompleted?: (
+    metadata: XaiStructuredRunMetadata | XaiAgentRunMetadata,
+  ) => void;
+  readonly onRequestFailure?: (error: XaiStructuredClientError) => void;
 }
 
 interface ParsedEnvelope {
@@ -247,127 +245,12 @@ interface ParsedAgentEnvelope {
   readonly usage: XaiStructuredUsage;
 }
 
-function normalizedBaseUrl(value: string): string {
-  const parsed = new URL(value);
-  const pathname = parsed.pathname.replace(/\/+$/, '');
-  if (
-    parsed.protocol !== 'https:' ||
-    parsed.username !== '' ||
-    parsed.password !== '' ||
-    parsed.search !== '' ||
-    parsed.hash !== '' ||
-    pathname !== '/v1'
-  ) {
-    throw new XaiStructuredClientError(
-      'invalid-configuration',
-      'configuration',
-    );
-  }
-  return `${parsed.origin}/v1`;
-}
-
 function boundedPositiveInteger(
   value: number,
   minimum: number,
   maximum: number,
 ): boolean {
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
-}
-
-function isRetryableStatus(status: number): boolean {
-  return (
-    status === 408 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  );
-}
-
-function isAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted ?? false;
-}
-
-function hasZeroDataRetention(response: Response): boolean {
-  return (
-    response.headers.get('x-zero-data-retention')?.trim().toLowerCase() ===
-    'true'
-  );
-}
-
-async function cancelBody(response: Response): Promise<void> {
-  try {
-    await response.body?.cancel();
-  } catch {
-    // Best effort; the caller still receives the bounded safe error.
-  }
-}
-
-async function readBoundedText(
-  response: Response,
-  phase: 'preflight' | 'request',
-): Promise<string> {
-  const declaredLength = response.headers.get('content-length');
-  let expectedSize: number | undefined;
-  if (declaredLength !== null) {
-    const size = /^(?:0|[1-9]\d*)$/.test(declaredLength)
-      ? Number(declaredLength)
-      : Number.NaN;
-    if (!Number.isSafeInteger(size) || size > MAX_RESPONSE_BYTES) {
-      await cancelBody(response);
-      throw invalidResponseError(phase, 'response-body');
-    }
-    expectedSize = size;
-  }
-  if (response.body === null) {
-    if (expectedSize !== undefined && expectedSize !== 0) {
-      throw new XaiStructuredClientError('network-error', phase);
-    }
-    return '';
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) {
-        break;
-      }
-      size += next.value.byteLength;
-      if (size > MAX_RESPONSE_BYTES) {
-        await reader.cancel().catch(() => undefined);
-        throw invalidResponseError(phase, 'response-body');
-      }
-      chunks.push(Uint8Array.from(next.value));
-    }
-    if (expectedSize !== undefined && size !== expectedSize) {
-      throw new XaiStructuredClientError('network-error', phase);
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    try {
-      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch {
-      throw invalidResponseError(phase, 'response-body');
-    } finally {
-      bytes.fill(0);
-    }
-  } catch (error) {
-    if (error instanceof XaiStructuredClientError) {
-      throw error;
-    }
-    throw new XaiStructuredClientError('network-error', phase);
-  } finally {
-    for (const chunk of chunks) {
-      chunk.fill(0);
-    }
-  }
 }
 
 function decodedEnvelope(
@@ -382,19 +265,19 @@ function decodedEnvelope(
     throw invalidResponseError(phase, 'response-envelope');
   }
   const envelope = responseEnvelopeSchema.safeParse(decoded);
-  if (
-    !envelope.success ||
-    envelope.data.status !== 'completed' ||
-    envelope.data.model !== expectedModel
-  ) {
+  if (!envelope.success) {
+    throw invalidResponseError(phase, 'response-envelope');
+  }
+  if (envelope.data.status !== 'completed') {
     throw new XaiStructuredClientError(
-      envelope.success && envelope.data.status !== 'completed'
-        ? 'response-incomplete'
-        : 'invalid-response',
+      'response-incomplete',
       phase,
       undefined,
       'response-envelope',
     );
+  }
+  if (envelope.data.model !== expectedModel) {
+    throw invalidResponseError(phase, 'model-mismatch');
   }
   return envelope.data;
 }
@@ -587,33 +470,31 @@ function validWebSearchOptions(
 }
 
 export class XaiStructuredClient {
-  readonly #apiKey: string;
-  readonly #baseUrl: string;
   readonly #model: string;
   readonly #reasoningEffort: ReasoningEffort;
-  readonly #timeoutMs: number;
-  readonly #maxAttempts: number;
-  readonly #retryBaseDelayMs: number;
-  readonly #fetch: typeof fetch;
-  readonly #sleep: (milliseconds: number) => Promise<void>;
+  readonly #transport: XaiResponsesTransport;
   readonly #now: () => number;
+  readonly #overallTimeoutMs: number;
+  readonly #onRunCompleted:
+    | ((metadata: XaiStructuredRunMetadata | XaiAgentRunMetadata) => void)
+    | undefined;
+  readonly #onRequestFailure:
+    ((error: XaiStructuredClientError) => void) | undefined;
 
   constructor(options: XaiStructuredClientOptions) {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    const overallTimeoutMs =
+      options.overallTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS;
     const retryBaseDelayMs =
       options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
     const model = options.model ?? DEFAULT_MODEL;
     const reasoningEffort = options.reasoningEffort ?? 'low';
     if (
-      options.apiKey.length === 0 ||
-      options.apiKey.length > 4_096 ||
-      options.apiKey !== options.apiKey.trim() ||
-      options.apiKey.includes('\n') ||
-      options.apiKey.includes('\r') ||
       !safeModelNamePattern.test(model) ||
       !reasoningEfforts.includes(reasoningEffort) ||
       !boundedPositiveInteger(timeoutMs, 100, 300_000) ||
+      !boundedPositiveInteger(overallTimeoutMs, 100, 300_000) ||
       !boundedPositiveInteger(maxAttempts, 1, 3) ||
       !boundedPositiveInteger(retryBaseDelayMs, 0, 5_000)
     ) {
@@ -622,21 +503,36 @@ export class XaiStructuredClient {
         'configuration',
       );
     }
-    this.#apiKey = options.apiKey;
-    this.#baseUrl = normalizedBaseUrl(options.baseUrl ?? DEFAULT_BASE_URL);
     this.#model = model;
     this.#reasoningEffort = reasoningEffort;
-    this.#timeoutMs = timeoutMs;
-    this.#maxAttempts = maxAttempts;
-    this.#retryBaseDelayMs = retryBaseDelayMs;
-    this.#fetch = options.fetchImplementation ?? fetch;
-    this.#sleep =
-      options.sleepImplementation ??
-      ((milliseconds) =>
-        new Promise((resolve) => {
-          setTimeout(resolve, milliseconds);
-        }));
     this.#now = options.now ?? Date.now;
+    this.#overallTimeoutMs = overallTimeoutMs;
+    this.#onRunCompleted = options.onRunCompleted;
+    this.#onRequestFailure = options.onRequestFailure;
+    try {
+      this.#transport = new XaiResponsesTransport({
+        apiKey: options.apiKey,
+        ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+        attemptTimeoutMs: timeoutMs,
+        overallTimeoutMs,
+        maxAttempts,
+        retryBaseDelayMs,
+        maxResponseBytes: MAX_RESPONSE_BYTES,
+        ...(options.fetchImplementation === undefined
+          ? {}
+          : { fetchImplementation: options.fetchImplementation }),
+        ...(options.sleepImplementation === undefined
+          ? {}
+          : { sleepImplementation: options.sleepImplementation }),
+        now: this.#now,
+        ...(options.random === undefined ? {} : { random: options.random }),
+      });
+    } catch {
+      throw new XaiStructuredClientError(
+        'invalid-configuration',
+        'configuration',
+      );
+    }
   }
 
   /**
@@ -664,7 +560,8 @@ export class XaiStructuredClient {
       throw new XaiStructuredClientError('invalid-request', 'request');
     }
     const startedAt = this.#now();
-    const preflight = await this.#preflight(signal);
+    const operationDeadline = startedAt + this.#overallTimeoutMs;
+    const preflight = await this.#preflight(signal, operationDeadline);
 
     const body = JSON.stringify({
       model: this.#model,
@@ -709,9 +606,10 @@ export class XaiStructuredClient {
       'request',
       (text) => parseEnvelope(text, this.#model, 'request'),
       signal,
+      operationDeadline,
     );
     const parsed = response.value;
-    return {
+    const result: XaiStructuredRun = {
       value: parsed.value,
       metadata: {
         provider: 'xai',
@@ -724,6 +622,8 @@ export class XaiStructuredClient {
         usage: addUsage(preflight.usage, parsed.usage),
       },
     };
+    this.#notifyCompleted(result.metadata);
+    return result;
   }
 
   async runAgent(
@@ -833,7 +733,8 @@ export class XaiStructuredClient {
       });
     }
     const startedAt = this.#now();
-    const preflight = await this.#preflight(signal);
+    const operationDeadline = startedAt + this.#overallTimeoutMs;
+    const preflight = await this.#preflight(signal, operationDeadline);
     let usage = preflight.usage;
     let requestAttempts = 0;
     const calledTools: string[] = [];
@@ -888,6 +789,7 @@ export class XaiStructuredClient {
             maxFinalResponseCharacters,
           ),
         signal,
+        operationDeadline,
       );
       requestAttempts += response.attempts;
       const parsed = response.value;
@@ -911,7 +813,7 @@ export class XaiStructuredClient {
           });
           continue;
         }
-        return {
+        const result: XaiAgentRun = {
           value: parsed.value,
           metadata: {
             provider: 'xai',
@@ -926,6 +828,8 @@ export class XaiStructuredClient {
             toolCalls: calledTools,
           },
         };
+        this.#notifyCompleted(result.metadata);
+        return result;
       }
       if (turn === maxTurns) {
         throw new XaiStructuredClientError('response-incomplete', 'request');
@@ -970,35 +874,14 @@ export class XaiStructuredClient {
     throw new XaiStructuredClientError('response-incomplete', 'request');
   }
 
-  async #preflight(signal: AbortSignal | undefined): Promise<{
+  async #preflight(
+    signal: AbortSignal | undefined,
+    operationDeadline?: number,
+  ): Promise<{
     readonly attempts: number;
     readonly usage: XaiStructuredUsage;
   }> {
-    const body = JSON.stringify({
-      model: this.#model,
-      store: false,
-      max_output_tokens: 128,
-      reasoning: { effort: 'low' },
-      input: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: 'Return the required structured acknowledgement.',
-            },
-          ],
-        },
-      ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'zdr_preflight_v1',
-          schema: preflightJsonSchema,
-          strict: true,
-        },
-      },
-    });
+    const body = xaiZdrPreflightBody(this.#model);
     const response = await this.#request(
       body,
       'preflight',
@@ -1010,6 +893,7 @@ export class XaiStructuredClient {
         return parsed;
       },
       signal,
+      operationDeadline,
     );
     return { attempts: response.attempts, usage: response.value.usage };
   }
@@ -1019,85 +903,55 @@ export class XaiStructuredClient {
     phase: 'preflight' | 'request',
     parse: (text: string) => T,
     externalSignal: AbortSignal | undefined,
-  ): Promise<RequestResult<T>> {
-    for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
-      if (isAborted(externalSignal)) {
-        throw new XaiStructuredClientError(
-          'request-aborted-before-send',
-          phase,
-        );
-      }
-      const timeoutSignal = AbortSignal.timeout(this.#timeoutMs);
-      const signal =
-        externalSignal === undefined
-          ? timeoutSignal
-          : AbortSignal.any([externalSignal, timeoutSignal]);
-      let response: Response;
-      try {
-        response = await this.#fetch(`${this.#baseUrl}/responses`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${this.#apiKey}`,
-            'content-type': 'application/json',
-          },
-          body,
-          redirect: 'error',
-          signal,
-        });
-      } catch {
-        const code: XaiStructuredClientErrorCode = isAborted(externalSignal)
-          ? 'request-aborted'
-          : timeoutSignal.aborted
-            ? 'request-timeout'
-            : 'network-error';
-        if (code !== 'request-aborted' && attempt < this.#maxAttempts) {
-          await this.#sleepBeforeRetry(attempt);
-          continue;
+    operationDeadline?: number,
+  ) {
+    try {
+      return await this.#transport.request(
+        body,
+        parse,
+        externalSignal,
+        operationDeadline,
+      );
+    } catch (error) {
+      if (!(error instanceof XaiResponsesTransportError)) {
+        if (error instanceof XaiStructuredClientError) {
+          this.#notifyFailure(error);
         }
-        throw new XaiStructuredClientError(code, phase);
+        throw error;
       }
-      if (!hasZeroDataRetention(response)) {
-        await cancelBody(response);
-        throw new XaiStructuredClientError('zdr-required', phase);
+      if (
+        error.code === 'response-size' ||
+        error.code === 'response-encoding'
+      ) {
+        const mapped = invalidResponseError(phase, 'response-body');
+        this.#notifyFailure(mapped);
+        throw mapped;
       }
-      if (response.ok) {
-        let text: string;
-        try {
-          text = await readBoundedText(response, phase);
-        } catch (error) {
-          if (
-            error instanceof XaiStructuredClientError &&
-            error.code !== 'network-error'
-          ) {
-            throw error;
-          }
-          await cancelBody(response);
-          const code: XaiStructuredClientErrorCode = isAborted(externalSignal)
-            ? 'request-aborted'
-            : timeoutSignal.aborted
-              ? 'request-timeout'
-              : 'network-error';
-          if (code !== 'request-aborted' && attempt < this.#maxAttempts) {
-            await this.#sleepBeforeRetry(attempt);
-            continue;
-          }
-          throw new XaiStructuredClientError(code, phase);
-        }
-        return { value: parse(text), attempts: attempt };
-      }
-      const status = response.status;
-      await cancelBody(response);
-      if (isRetryableStatus(status) && attempt < this.#maxAttempts) {
-        await this.#sleepBeforeRetry(attempt);
-        continue;
-      }
-      throw new XaiStructuredClientError('http-error', phase, status);
+      const mapped = new XaiStructuredClientError(
+        error.code,
+        phase,
+        error.httpStatus,
+      );
+      this.#notifyFailure(mapped);
+      throw mapped;
     }
-    throw new XaiStructuredClientError('network-error', phase);
   }
 
-  #sleepBeforeRetry(attempt: number): Promise<void> {
-    const delay = Math.min(1_000, this.#retryBaseDelayMs * 2 ** (attempt - 1));
-    return this.#sleep(delay);
+  #notifyCompleted(
+    metadata: XaiStructuredRunMetadata | XaiAgentRunMetadata,
+  ): void {
+    try {
+      this.#onRunCompleted?.(metadata);
+    } catch {
+      // Observability must never change a household-finance outcome.
+    }
+  }
+
+  #notifyFailure(error: XaiStructuredClientError): void {
+    try {
+      this.#onRequestFailure?.(error);
+    } catch {
+      // Observability must never replace the fixed safe model error.
+    }
   }
 }

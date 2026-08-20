@@ -383,10 +383,14 @@ export class ActualReadHttpClient implements ActualReadPort {
         method: body === undefined ? 'GET' : 'POST',
         headers:
           body === undefined
-            ? { accept: 'application/json' }
+            ? {
+                accept: 'application/json',
+                'x-household-finance-read-version': '2',
+              }
             : {
                 accept: 'application/json',
                 'content-type': 'application/json',
+                'x-household-finance-read-version': '2',
               },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         redirect: 'error',
@@ -479,6 +483,7 @@ export class ActualDeterministicTransactionHttpClient
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
+          'x-household-finance-read-version': '2',
         },
         body: JSON.stringify(body),
         redirect: 'error',

@@ -30,7 +30,7 @@ services:
       HOST: 0.0.0.0
       PORT: '4380'
       DATA_DIR: /data
-      MODEL_NAME: ${MODEL_NAME:-grok-4.5}
+      MODEL_NAME: ${MODEL_NAME:-grok-4.6}
       MODEL_REASONING_EFFORT: ${MODEL_REASONING_EFFORT:-high}
       XAI_API_KEY_FILE: /run/secrets/xai_api_key
       INTAKE_MODE: ${INTAKE_MODE:-disabled}
@@ -311,6 +311,18 @@ services:
     depends_on:
       actual-server:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4360/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 4
     logging:
       driver: json-file
       options:

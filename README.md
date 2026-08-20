@@ -103,6 +103,13 @@ pnpm dev
 curl --fail http://127.0.0.1:4380/health/ready
 ```
 
+Production mode also exposes `/health/status` and Prometheus `/metrics` with
+fixed, aggregate operational state only: configured model/reasoning/revision,
+bank-sync freshness and account counts, queue age/counts, worker failures, and
+model latency/cost/failure counters. These endpoints never include account
+identities, amounts, prompts, receipts, or model payloads. The default model is
+the exact `grok-4.6` identifier with high reasoning effort.
+
 The repository includes a generic Compose setup for `finance-bot`,
 `document-preparer`, `actual-reader`, `actual-writer`, and `actual-server`.
 Configuration examples live in `.env.example`, and provisioning scripts cover

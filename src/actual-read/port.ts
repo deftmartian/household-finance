@@ -18,7 +18,14 @@ export const ACTUAL_CATEGORIZATION_UPDATE_PREPARATION_SCHEMA_VERSION =
   'actual-categorization-update-preparation.v1' as const;
 
 export type ActualReadSyncOutcome =
-  'never' | 'succeeded' | 'failed' | 'skipped-recent';
+  'never' | 'succeeded' | 'partial' | 'failed' | 'skipped-recent';
+
+export interface ActualReadSyncAttemptSummary {
+  readonly attemptedAccountCount: number;
+  readonly succeededAccountCount: number;
+  readonly failedAccountCount: number;
+  readonly budgetRefreshSucceeded: boolean;
+}
 
 export interface ActualReadFreshness {
   readonly actualBudgetAsOf: string;
@@ -28,6 +35,8 @@ export interface ActualReadFreshness {
   readonly lastOutcome: ActualReadSyncOutcome;
   readonly isFresh: boolean;
   readonly expectedBankDelayHours: number;
+  /** Added in freshness v2; omitted by a rolling predecessor reader. */
+  readonly lastAttemptSummary?: ActualReadSyncAttemptSummary | undefined;
 }
 
 export interface ActualReadResult {

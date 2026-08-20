@@ -447,6 +447,49 @@ describe('Actual read HTTP boundary', () => {
     );
   });
 
+  it('negotiates partial-sync freshness without breaking a rolling v1 client', async () => {
+    const partialFreshness: ActualReadFreshness = {
+      ...freshness,
+      lastOutcome: 'partial',
+      lastAttemptSummary: {
+        attemptedAccountCount: 3,
+        succeededAccountCount: 2,
+        failedAccountCount: 1,
+        budgetRefreshSucceeded: true,
+      },
+    };
+    const baseUrl = await start(
+      syntheticReader({
+        syncNow: async () => ({
+          outcome: 'partial',
+          freshness: partialFreshness,
+        }),
+      }),
+    );
+
+    await expect(
+      new ActualReadHttpClient({ endpoint: baseUrl }).syncNow(),
+    ).resolves.toMatchObject({
+      outcome: 'partial',
+      freshness: {
+        lastOutcome: 'partial',
+        lastAttemptSummary: { succeededAccountCount: 2, failedAccountCount: 1 },
+      },
+    });
+
+    const legacyResponse = await fetch(`${baseUrl}/v1/sync`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const legacy = (await legacyResponse.json()) as Record<string, unknown>;
+    expect(legacy).toMatchObject({
+      outcome: 'failed',
+      freshness: { lastOutcome: 'failed' },
+    });
+    expect(JSON.stringify(legacy)).not.toContain('lastAttemptSummary');
+  });
+
   it('isolates strict identifier-bearing endpoints behind the deterministic client', async () => {
     const baseUrl = await start(syntheticReader());
     const safeClient = new ActualReadHttpClient({ endpoint: baseUrl });
@@ -816,7 +859,10 @@ describe('Actual read HTTP boundary', () => {
     ]);
     expect(
       fetchImplementation.mock.calls.every(
-        ([, init]) => init?.redirect === 'error',
+        ([, init]) =>
+          init?.redirect === 'error' &&
+          new Headers(init.headers).get('x-household-finance-read-version') ===
+            '2',
       ),
     ).toBe(true);
   });

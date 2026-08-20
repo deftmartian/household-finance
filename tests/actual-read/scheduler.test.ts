@@ -81,4 +81,31 @@ describe('BankSyncScheduler', () => {
     expect(onCompletedImportAttempt).toHaveBeenCalledExactlyOnceWith(failed);
     await scheduler.stop();
   });
+
+  it('wakes downstream work after a partial import', async () => {
+    const onCompletedImportAttempt = vi.fn();
+    const partial: ActualReadSyncResult = {
+      outcome: 'partial',
+      freshness: {
+        ...succeeded.freshness,
+        lastOutcome: 'partial',
+        isFresh: false,
+        lastAttemptSummary: {
+          attemptedAccountCount: 4,
+          succeededAccountCount: 3,
+          failedAccountCount: 1,
+          budgetRefreshSucceeded: true,
+        },
+      },
+    };
+    const scheduler = new BankSyncScheduler({
+      reader: { syncNow: vi.fn().mockResolvedValue(partial) },
+      intervalMs: 4 * 60 * 60 * 1_000,
+      onCompletedImportAttempt,
+    });
+
+    await expect(scheduler.runNow()).resolves.toEqual(partial);
+    expect(onCompletedImportAttempt).toHaveBeenCalledExactlyOnceWith(partial);
+    await scheduler.stop();
+  });
 });

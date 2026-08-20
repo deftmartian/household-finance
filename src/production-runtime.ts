@@ -49,6 +49,10 @@ import {
   WebDavHouseholdProfileRepository,
   WebDavOriginalArchive,
 } from './nextcloud/index.js';
+import {
+  createProductionQueueHealthReader,
+  OperationalMetrics,
+} from './operations/operational-metrics.js';
 import { conversationalActualWriteTools } from './questions/actual-write-tools.js';
 import { costcoItemLookupTool } from './questions/costco-item-lookup-tool.js';
 import { currentReceiptReadTool } from './questions/current-receipt-tools.js';
@@ -87,6 +91,7 @@ import {
   AttachmentShadowOutboxWorker,
   AttachmentShadowWorkflow,
   type NamedWorkerKick,
+  ProductionWorkCoordinator,
   ReceiptPipelineReconciler,
   runWorkerKicksInOrder,
 } from './workflow/index.js';
@@ -164,6 +169,7 @@ export function createProductionRuntime(
   const abortController = new AbortController();
   const cleanups: Array<() => void> = [];
   let resourcesClosed = false;
+  let signalPrimaryWork: () => void = () => undefined;
 
   const own = <T>(resource: T, close: (resource: T) => void): T => {
     cleanups.push(() => close(resource));
@@ -218,21 +224,10 @@ export function createProductionRuntime(
     );
     attachmentStore.recoverInterruptedOutbox(startupTime);
 
-    const structuredModel = new XaiStructuredClient({
-      apiKey: config.model.apiKey,
-      model: config.model.name,
-      reasoningEffort: config.model.reasoningEffort,
-      maxAttempts: 2,
-    });
     const fileSource = new WebDavFileSource({
       baseUrl: config.archive.baseUrl,
       userId: config.archive.serviceUser,
       appPassword: config.archive.appPassword,
-    });
-    const voiceMessageTranscriber = new XaiSpeechToTextTranscriber({
-      apiKey: config.model.apiKey,
-      source: fileSource,
-      zeroDataRetentionVerifier: structuredModel,
     });
     const profileRepository = new WebDavHouseholdProfileRepository({
       baseUrl: config.archive.baseUrl,
@@ -357,6 +352,50 @@ export function createProductionRuntime(
       (store) => store.close(),
     );
     receiptMatchStore.recoverInterruptedOutbox(startupTime);
+
+    const queueHealth = own(
+      createProductionQueueHealthReader({
+        attachment: attachmentDatabasePath,
+        questions: join(config.dataDirectory, 'finance-questions.sqlite'),
+        context: join(config.dataDirectory, 'household-context.sqlite'),
+        receiptCategorization: join(
+          config.dataDirectory,
+          'receipt-categorization.sqlite',
+        ),
+        receiptMatching: join(config.dataDirectory, 'receipt-matching.sqlite'),
+        transactionCategorization: join(
+          config.dataDirectory,
+          'transaction-categorization.sqlite',
+        ),
+      }),
+      (reader) => reader.close(),
+    );
+    const operationalMetrics = new OperationalMetrics({
+      model: config.model.name,
+      reasoningEffort: config.model.reasoningEffort,
+      ...(process.env.SOURCE_REVISION === undefined
+        ? {}
+        : { sourceRevision: process.env.SOURCE_REVISION }),
+      expectedBankSyncIntervalMs: config.questionAnswering.bankSyncIntervalMs,
+      queueHealth,
+    });
+    const structuredModel = new XaiStructuredClient({
+      apiKey: config.model.apiKey,
+      model: config.model.name,
+      reasoningEffort: config.model.reasoningEffort,
+      maxAttempts: 3,
+      onRunCompleted: (metadata) => {
+        operationalMetrics.recordModelCompleted('structured', metadata);
+      },
+      onRequestFailure: (error) => {
+        operationalMetrics.recordModelFailure('structured', error);
+      },
+    });
+    const voiceMessageTranscriber = new XaiSpeechToTextTranscriber({
+      apiKey: config.model.apiKey,
+      source: fileSource,
+      zeroDataRetentionVerifier: structuredModel,
+    });
 
     const receiptRecordProjection =
       new CanonicalReceiptRecordProjectionSource();
@@ -567,10 +606,10 @@ export function createProductionRuntime(
                           enqueueResultReply: ruleOptions.enqueueResultReply,
                         },
                       );
-                      await householdContextWorker.kick();
+                      signalPrimaryWork();
                     },
                     onIntentQueued: async (intent) => {
-                      await actualUpdateTalkInteractionWorker.kick();
+                      signalPrimaryWork();
                       return actualUpdateIntentStore.getPublicIntent(
                         intent.proposal.intentId,
                       );
@@ -625,7 +664,13 @@ export function createProductionRuntime(
           model: config.model.name,
           reasoningEffort: config.model.reasoningEffort,
           timeZone: config.questionAnswering.timeZone,
-          maxAttempts: 2,
+          maxAttempts: 3,
+          onRunCompleted: (metadata) => {
+            operationalMetrics.recordModelCompleted('receipt', metadata);
+          },
+          onRequestFailure: (error) => {
+            operationalMetrics.recordModelFailure('receipt', error);
+          },
         }),
         talk,
         conversation: {
@@ -642,6 +687,7 @@ export function createProductionRuntime(
               },
               { enqueueAcknowledgement: false },
             );
+            signalPrimaryWork();
           },
         },
         signal: abortController.signal,
@@ -727,13 +773,40 @@ export function createProductionRuntime(
     const bankSyncScheduler = new BankSyncScheduler({
       reader: actualReader,
       intervalMs: config.questionAnswering.bankSyncIntervalMs,
-      onCompletedImportAttempt: async () => {
-        await kickWorkersSafely('post-bank-sync', workerKickPlan.postBankSync);
+      onCompletedImportAttempt: async (result) => {
+        operationalMetrics.recordBankSync(result);
+        await coordinator.signal('post-bank-sync');
       },
       onError: () => {
         process.stderr.write('scheduled Actual bank sync failed safely\n');
       },
     });
+
+    const coordinator = new ProductionWorkCoordinator({
+      lanes: {
+        primary: workerKickPlan.outboxPoll,
+        'transaction-categorization':
+          workerKickPlan.transactionCategorizationPoll,
+        'post-bank-sync': workerKickPlan.postBankSync,
+      },
+      onRun: (lane, summary) => {
+        operationalMetrics.recordWorkerRun(lane, summary);
+        if (summary.failures.length > 0) {
+          process.stderr.write(
+            `${lane} worker kicks failed safely: ${summary.failures.join(',')}\n`,
+          );
+        }
+      },
+    });
+    signalPrimaryWork = () => {
+      void coordinator.signal('primary');
+    };
+
+    const laneWorker = (lane: string): { kick(): Promise<void> } => ({
+      kick: () => coordinator.signal(lane),
+    });
+    const primaryLaneWorker = laneWorker('primary');
+    const transactionLaneWorker = laneWorker('transaction-categorization');
 
     let poller: NodeJS.Timeout | undefined;
     let transactionCategorizationPoller: NodeJS.Timeout | undefined;
@@ -743,15 +816,19 @@ export function createProductionRuntime(
         throw new Error('Production background work has already started');
       }
       backgroundWorkStarted = true;
-      void kickWorkersSafely('initial', workerKickPlan.initial);
+      void runWorkerKicksInOrder(workerKickPlan.initial).then((summary) => {
+        operationalMetrics.recordWorkerRun('initial', summary);
+        if (summary.failures.length > 0) {
+          process.stderr.write(
+            `initial worker kicks failed safely: ${summary.failures.join(',')}\n`,
+          );
+        }
+      });
       poller = setInterval(() => {
-        void kickWorkersSafely('outbox-poll', workerKickPlan.outboxPoll);
-      }, 1_000);
+        void coordinator.signal('primary');
+      }, 30_000);
       transactionCategorizationPoller = setInterval(() => {
-        void kickWorkersSafely(
-          'transaction-categorization-poll',
-          workerKickPlan.transactionCategorizationPoll,
-        );
+        void coordinator.signal('transaction-categorization');
       }, config.transactionCategorization.scanIntervalMs);
       bankSyncScheduler.start();
     };
@@ -765,33 +842,38 @@ export function createProductionRuntime(
         clearInterval(transactionCategorizationPoller);
         transactionCategorizationPoller = undefined;
       }
+      coordinator.stop();
     };
 
     return {
       httpDependencies: {
         attachmentStore,
-        attachmentWorker,
+        attachmentWorker: primaryLaneWorker,
         questionStore,
-        questionWorker,
+        questionWorker: primaryLaneWorker,
         householdContextStore,
-        householdContextWorker,
+        householdContextWorker: primaryLaneWorker,
         transactionCategorizationStore,
-        transactionCategorizationWorker,
+        transactionCategorizationWorker: transactionLaneWorker,
         receiptCategorizationStore,
-        receiptCategorizationWorker,
+        receiptCategorizationWorker: primaryLaneWorker,
         receiptMatchStore,
-        receiptPipelineReconciler,
-        receiptMatchAmbiguityTalkWorker,
+        receiptPipelineReconciler: primaryLaneWorker,
+        receiptMatchAmbiguityTalkWorker: primaryLaneWorker,
         actualUpdateIntentStore,
         actualUpdateTalkStore,
-        actualUpdateTalkInteractionWorker,
+        actualUpdateTalkInteractionWorker: primaryLaneWorker,
         actualUpdateTalkDecisionHandler,
         talkClarificationHandler,
+        operationalMetrics,
       },
       startBackgroundWork,
       beginShutdown,
       stopBankSync: () => bankSyncScheduler.stop(),
-      drainWorkers: () => kickWorkersSafely('shutdown', primaryWorkerKicks),
+      drainWorkers: async () => {
+        await coordinator.drain();
+        await kickWorkersSafely('shutdown', primaryWorkerKicks);
+      },
       close,
     };
   } catch (error) {

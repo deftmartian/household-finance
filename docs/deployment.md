@@ -35,6 +35,16 @@ pnpm dev
 curl --fail http://127.0.0.1:4380/health/ready
 ```
 
+In production, keep `/health/ready` as the process/intake readiness contract.
+Use `/health/status` for a privacy-safe aggregate diagnosis and `/metrics` for
+Prometheus. The isolated writer separately serves localhost readiness on port
+4360; Compose uses that completed-cycle signal for container health.
+
+The default model configuration requests the exact `grok-4.6` identifier with
+high reasoning effort. The status and metrics build series report the
+configured model, reasoning effort, and image source revision so deployment
+verification can compare the running artifact with its approved contract.
+
 ## Compose services
 
 The generic `compose.yaml` defines:
@@ -66,6 +76,13 @@ job is green before a manual deployment. The application services use stable
 interfaces and do not require an atomic, same-revision restart, so an Arcane
 installation with auto-update enabled may update each eligible service on its
 normal schedule.
+
+Actual-read protocol v2 explicitly negotiates partial bank-sync freshness.
+During a rolling release, an older client receives a conservative v1-compatible
+failed outcome without the new aggregate summary; a v2 client receives the
+partial outcome and privacy-safe attempted/succeeded/failed account counts.
+The reader also maintains a v1 freshness-state mirror so its persisted state
+can be rolled back independently.
 
 To deploy manually:
 

@@ -16,24 +16,20 @@ import {
   receiptModelProposalV1Schema,
   type ReceiptModelProposalV1,
 } from './proposal.js';
+import {
+  XaiResponsesTransport,
+  XaiResponsesTransportError,
+  xaiZdrPreflightBody,
+} from './xai-responses-transport.js';
 
-const DEFAULT_BASE_URL = 'https://api.x.ai/v1';
-const DEFAULT_MODEL = 'grok-4.5';
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_MODEL = 'grok-4.6';
+const DEFAULT_TIMEOUT_MS = 240_000;
+const DEFAULT_OVERALL_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
-const DEFAULT_RETRY_BASE_DELAY_MS = 100;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const safeModelNamePattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
-const preflightJsonSchema = {
-  $schema: 'https://json-schema.org/draft/2020-12/schema',
-  type: 'object',
-  properties: {
-    acknowledged: { const: true },
-  },
-  required: ['acknowledged'],
-  additionalProperties: false,
-} as const;
 const preflightAcknowledgementSchema = z.strictObject({
   acknowledged: z.literal(true),
 });
@@ -133,32 +129,15 @@ export interface XaiResponsesReceiptAdapterOptions {
   reasoningEffort?: 'low' | 'medium' | 'high';
   timeZone?: string;
   timeoutMs?: number;
+  overallTimeoutMs?: number;
   maxAttempts?: number;
   retryBaseDelayMs?: number;
   fetchImplementation?: typeof fetch;
   sleepImplementation?: (milliseconds: number) => Promise<void>;
   now?: () => number;
-}
-
-interface RequestResult<T> {
-  value: T;
-  attempts: number;
-}
-
-function normalizedBaseUrl(value: string): string {
-  const parsed = new URL(value);
-  const pathname = parsed.pathname.replace(/\/+$/, '');
-  if (
-    parsed.protocol !== 'https:' ||
-    parsed.username !== '' ||
-    parsed.password !== '' ||
-    parsed.search !== '' ||
-    parsed.hash !== '' ||
-    pathname !== '/v1'
-  ) {
-    throw new Error('invalid base URL');
-  }
-  return `${parsed.origin}/v1`;
+  random?: () => number;
+  onRunCompleted?: (metadata: ReceiptModelRun['metadata']) => void;
+  onRequestFailure?: (error: XaiResponsesAdapterError) => void;
 }
 
 function validTimeZone(value: string): boolean {
@@ -193,127 +172,6 @@ function positiveInteger(value: number, maximum: number): value is number {
 
 function nonnegativeInteger(value: number, maximum: number): value is number {
   return Number.isSafeInteger(value) && value >= 0 && value <= maximum;
-}
-
-function isRetryableStatus(status: number): boolean {
-  return (
-    status === 408 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  );
-}
-
-function isZeroDataRetention(response: Response): boolean {
-  return (
-    response.headers.get('x-zero-data-retention')?.trim().toLowerCase() ===
-    'true'
-  );
-}
-
-function isAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted ?? false;
-}
-
-async function cancelBody(response: Response): Promise<void> {
-  try {
-    await response.body?.cancel();
-  } catch {
-    // A best-effort cancellation must never expose or replace the safe error.
-  }
-}
-
-async function readBoundedText(
-  response: Response,
-  phase: 'preflight' | 'document',
-): Promise<string> {
-  const declaredLength = response.headers.get('content-length');
-  let expectedSize: number | undefined;
-  if (declaredLength !== null) {
-    const parsedLength = /^(?:0|[1-9]\d*)$/.test(declaredLength)
-      ? Number(declaredLength)
-      : NaN;
-    if (
-      !Number.isSafeInteger(parsedLength) ||
-      parsedLength < 0 ||
-      parsedLength > MAX_RESPONSE_BYTES
-    ) {
-      await cancelBody(response);
-      throw new XaiResponsesAdapterError(
-        'invalid-response',
-        phase,
-        undefined,
-        'body-size',
-      );
-    }
-    expectedSize = parsedLength;
-  }
-
-  if (response.body === null) {
-    if (expectedSize !== undefined && expectedSize !== 0) {
-      throw new XaiResponsesAdapterError('network-error', phase);
-    }
-    return '';
-  }
-
-  const reader = response.body.getReader();
-  const chunks: Buffer[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) {
-        break;
-      }
-      const bytes = Buffer.from(chunk.value);
-      size += bytes.length;
-      if (size > MAX_RESPONSE_BYTES) {
-        await reader.cancel().catch(() => undefined);
-        bytes.fill(0);
-        for (const buffered of chunks) {
-          buffered.fill(0);
-        }
-        throw new XaiResponsesAdapterError(
-          'invalid-response',
-          phase,
-          undefined,
-          'body-size',
-        );
-      }
-      chunks.push(bytes);
-    }
-    if (expectedSize !== undefined && size !== expectedSize) {
-      throw new XaiResponsesAdapterError('network-error', phase);
-    }
-  } catch (error) {
-    for (const chunk of chunks) {
-      chunk.fill(0);
-    }
-    if (error instanceof XaiResponsesAdapterError) {
-      throw error;
-    }
-    throw new XaiResponsesAdapterError('network-error', phase);
-  }
-
-  let combined: Buffer | undefined;
-  try {
-    combined = Buffer.concat(chunks, size);
-    return new TextDecoder('utf-8', { fatal: true }).decode(combined);
-  } catch {
-    throw new XaiResponsesAdapterError(
-      'invalid-response',
-      phase,
-      undefined,
-      'body-encoding',
-    );
-  } finally {
-    combined?.fill(0);
-    for (const chunk of chunks) {
-      chunk.fill(0);
-    }
-  }
 }
 
 function snapshotPreparedDocument(
@@ -691,48 +549,36 @@ function parseDocumentResponse(
 }
 
 export class XaiResponsesReceiptAdapter implements ReceiptModelAdapter {
-  readonly #apiKey: string;
-  readonly #baseUrl: string;
   readonly #model: string;
   readonly #reasoningEffort: 'low' | 'medium' | 'high';
   readonly #timeZone: string;
-  readonly #timeoutMs: number;
-  readonly #maxAttempts: number;
-  readonly #retryBaseDelayMs: number;
-  readonly #fetch: typeof fetch;
-  readonly #sleep: (milliseconds: number) => Promise<void>;
+  readonly #transport: XaiResponsesTransport;
   readonly #now: () => number;
+  readonly #overallTimeoutMs: number;
+  readonly #onRunCompleted:
+    ((metadata: ReceiptModelRun['metadata']) => void) | undefined;
+  readonly #onRequestFailure:
+    ((error: XaiResponsesAdapterError) => void) | undefined;
 
   constructor(options: XaiResponsesReceiptAdapterOptions) {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    const overallTimeoutMs =
+      options.overallTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS;
     const retryBaseDelayMs =
       options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
     const model = options.model ?? DEFAULT_MODEL;
     const reasoningEffort = options.reasoningEffort ?? 'low';
     const timeZone = options.timeZone ?? 'UTC';
 
-    try {
-      this.#baseUrl = normalizedBaseUrl(options.baseUrl ?? DEFAULT_BASE_URL);
-    } catch {
-      throw new XaiResponsesAdapterError(
-        'invalid-configuration',
-        'configuration',
-      );
-    }
-
     if (
-      options.apiKey.length === 0 ||
-      options.apiKey.length > 4_096 ||
-      options.apiKey !== options.apiKey.trim() ||
-      options.apiKey.includes('\n') ||
-      options.apiKey.includes('\r') ||
       !safeModelNamePattern.test(model) ||
       !['low', 'medium', 'high'].includes(reasoningEffort) ||
       timeZone.length === 0 ||
       timeZone.length > 100 ||
       !validTimeZone(timeZone) ||
       !positiveInteger(timeoutMs, 300_000) ||
+      !positiveInteger(overallTimeoutMs, 300_000) ||
       !positiveInteger(maxAttempts, 3) ||
       !nonnegativeInteger(retryBaseDelayMs, 5_000)
     ) {
@@ -742,21 +588,37 @@ export class XaiResponsesReceiptAdapter implements ReceiptModelAdapter {
       );
     }
 
-    this.#apiKey = options.apiKey;
     this.#model = model;
     this.#reasoningEffort = reasoningEffort;
     this.#timeZone = timeZone;
-    this.#timeoutMs = timeoutMs;
-    this.#maxAttempts = maxAttempts;
-    this.#retryBaseDelayMs = retryBaseDelayMs;
-    this.#fetch = options.fetchImplementation ?? fetch;
-    this.#sleep =
-      options.sleepImplementation ??
-      ((milliseconds) =>
-        new Promise((resolve) => {
-          setTimeout(resolve, milliseconds);
-        }));
     this.#now = options.now ?? Date.now;
+    this.#overallTimeoutMs = overallTimeoutMs;
+    this.#onRunCompleted = options.onRunCompleted;
+    this.#onRequestFailure = options.onRequestFailure;
+    try {
+      this.#transport = new XaiResponsesTransport({
+        apiKey: options.apiKey,
+        ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+        attemptTimeoutMs: timeoutMs,
+        overallTimeoutMs,
+        maxAttempts,
+        retryBaseDelayMs,
+        maxResponseBytes: MAX_RESPONSE_BYTES,
+        ...(options.fetchImplementation === undefined
+          ? {}
+          : { fetchImplementation: options.fetchImplementation }),
+        ...(options.sleepImplementation === undefined
+          ? {}
+          : { sleepImplementation: options.sleepImplementation }),
+        now: this.#now,
+        ...(options.random === undefined ? {} : { random: options.random }),
+      });
+    } catch {
+      throw new XaiResponsesAdapterError(
+        'invalid-configuration',
+        'configuration',
+      );
+    }
   }
 
   async extract(
@@ -786,41 +648,19 @@ export class XaiResponsesReceiptAdapter implements ReceiptModelAdapter {
     }
 
     const startedAt = this.#now();
+    const operationDeadline = startedAt + this.#overallTimeoutMs;
     try {
       const currentDate = currentDateInTimeZone(
         new Date(startedAt),
         this.#timeZone,
       );
-      const preflightBody = JSON.stringify({
-        model: this.#model,
-        store: false,
-        max_output_tokens: 128,
-        reasoning: { effort: 'low' },
-        input: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: 'Return the required structured acknowledgement.',
-              },
-            ],
-          },
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'zdr_preflight_v1',
-            schema: preflightJsonSchema,
-            strict: true,
-          },
-        },
-      });
+      const preflightBody = xaiZdrPreflightBody(this.#model);
       const preflight = await this.#requestWithRetry(
         preflightBody,
         'preflight',
         (text) => preflightUsage(text, this.#model),
         signal,
+        operationDeadline,
       );
       const preflightRequestUsage = preflight.value;
 
@@ -863,11 +703,12 @@ export class XaiResponsesReceiptAdapter implements ReceiptModelAdapter {
         (text) =>
           parseDocumentResponse(text, document.pages.length, this.#model),
         signal,
+        operationDeadline,
       );
       const parsed = documentRequest.value;
       const usage = combinedUsage(preflightRequestUsage, parsed.usage);
       const durationMs = Math.max(0, this.#now() - startedAt);
-      return {
+      const result: ReceiptModelRun = {
         proposal: parsed.proposal,
         metadata: {
           provider: 'xai',
@@ -880,6 +721,8 @@ export class XaiResponsesReceiptAdapter implements ReceiptModelAdapter {
           usage,
         },
       };
+      this.#notifyCompleted(result.metadata);
+      return result;
     } finally {
       for (const page of document.pages) {
         page.bytes.fill(0);
@@ -892,91 +735,65 @@ export class XaiResponsesReceiptAdapter implements ReceiptModelAdapter {
     phase: 'preflight' | 'document',
     parse: (text: string) => T,
     externalSignal: AbortSignal | undefined,
-  ): Promise<RequestResult<T>> {
-    for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
-      if (isAborted(externalSignal)) {
-        throw new XaiResponsesAdapterError(
-          'request-aborted-before-send',
+    operationDeadline?: number,
+  ) {
+    try {
+      return await this.#transport.request(
+        body,
+        parse,
+        externalSignal,
+        operationDeadline,
+      );
+    } catch (error) {
+      if (!(error instanceof XaiResponsesTransportError)) {
+        if (error instanceof XaiResponsesAdapterError) {
+          this.#notifyFailure(error);
+        }
+        throw error;
+      }
+      if (error.code === 'response-size') {
+        const mapped = new XaiResponsesAdapterError(
+          'invalid-response',
           phase,
+          undefined,
+          'body-size',
         );
+        this.#notifyFailure(mapped);
+        throw mapped;
       }
-
-      const timeoutSignal = AbortSignal.timeout(this.#timeoutMs);
-      const requestSignal =
-        externalSignal === undefined
-          ? timeoutSignal
-          : AbortSignal.any([externalSignal, timeoutSignal]);
-
-      let response: Response;
-      try {
-        response = await this.#fetch(`${this.#baseUrl}/responses`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${this.#apiKey}`,
-            'content-type': 'application/json',
-          },
-          body,
-          redirect: 'error',
-          signal: requestSignal,
-        });
-      } catch {
-        const code: XaiResponsesAdapterErrorCode = isAborted(externalSignal)
-          ? 'request-aborted'
-          : timeoutSignal.aborted
-            ? 'request-timeout'
-            : 'network-error';
-        if (code !== 'request-aborted' && attempt < this.#maxAttempts) {
-          await this.#sleepBeforeRetry(attempt);
-          continue;
-        }
-        throw new XaiResponsesAdapterError(code, phase);
+      if (error.code === 'response-encoding') {
+        const mapped = new XaiResponsesAdapterError(
+          'invalid-response',
+          phase,
+          undefined,
+          'body-encoding',
+        );
+        this.#notifyFailure(mapped);
+        throw mapped;
       }
-
-      if (!isZeroDataRetention(response)) {
-        await cancelBody(response);
-        throw new XaiResponsesAdapterError('zdr-required', phase);
-      }
-
-      if (response.ok) {
-        let text: string;
-        try {
-          text = await readBoundedText(response, phase);
-        } catch (error) {
-          if (
-            error instanceof XaiResponsesAdapterError &&
-            error.code !== 'network-error'
-          ) {
-            throw error;
-          }
-          await cancelBody(response);
-          const code: XaiResponsesAdapterErrorCode = isAborted(externalSignal)
-            ? 'request-aborted'
-            : timeoutSignal.aborted
-              ? 'request-timeout'
-              : 'network-error';
-          if (code !== 'request-aborted' && attempt < this.#maxAttempts) {
-            await this.#sleepBeforeRetry(attempt);
-            continue;
-          }
-          throw new XaiResponsesAdapterError(code, phase);
-        }
-        return { value: parse(text), attempts: attempt };
-      }
-
-      const status = response.status;
-      await cancelBody(response);
-      if (isRetryableStatus(status) && attempt < this.#maxAttempts) {
-        await this.#sleepBeforeRetry(attempt);
-        continue;
-      }
-      throw new XaiResponsesAdapterError('http-error', phase, status);
+      const mapped = new XaiResponsesAdapterError(
+        error.code,
+        phase,
+        error.httpStatus,
+      );
+      this.#notifyFailure(mapped);
+      throw mapped;
     }
-
-    throw new XaiResponsesAdapterError('network-error', phase);
   }
 
-  #sleepBeforeRetry(attempt: number): Promise<void> {
-    const delay = Math.min(1_000, this.#retryBaseDelayMs * 2 ** (attempt - 1));
-    return this.#sleep(delay);
+  #notifyCompleted(metadata: ReceiptModelRun['metadata']): void {
+    try {
+      this.#onRunCompleted?.(metadata);
+    } catch {
+      // Observability must never change a household-finance outcome.
+    }
+  }
+
+  #notifyFailure(error: XaiResponsesAdapterError): void {
+    try {
+      this.#onRequestFailure?.(error);
+    } catch {
+      // Observability must never replace the fixed safe model error.
+    }
   }
 }

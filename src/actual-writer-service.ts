@@ -1,3 +1,4 @@
+import { createServer, type Server } from 'node:http';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -79,6 +80,7 @@ export interface ActualWriterServiceLoopOptions {
   readonly startWatchdog?: (scope: string, timeoutMs: number) => () => void;
   readonly onCycleFailure?: (error: unknown) => void;
   readonly onCleanupFailure?: (error: unknown) => void;
+  readonly now?: () => number;
 }
 
 /**
@@ -96,6 +98,8 @@ export class ActualWriterServiceLoop {
   #shutdownRequested = false;
   #cycleFailureHandled = false;
   #nextQueueIndex = 0;
+  #lastCompletedCycleAt: number | undefined;
+  #cycleActive = false;
 
   constructor(options: ActualWriterServiceLoopOptions) {
     if (
@@ -115,6 +119,40 @@ export class ActualWriterServiceLoop {
 
   get isShuttingDown(): boolean {
     return this.#shutdownRequested;
+  }
+
+  readiness(now = (this.#options.now ?? Date.now)()): {
+    readonly ready: boolean;
+    readonly state: 'starting' | 'working' | 'ready' | 'stopping' | 'failed';
+    readonly lastCompletedCycleAt: string | null;
+  } {
+    const lastCompletedCycleAt = this.#lastCompletedCycleAt;
+    const recentThreshold = Math.max(
+      30_000,
+      this.#options.pollIntervalMs * 3 + this.#options.operationTimeoutMs,
+    );
+    const ready =
+      !this.#shutdownRequested &&
+      !this.#cycleFailureHandled &&
+      (this.#cycleActive ||
+        (lastCompletedCycleAt !== undefined &&
+          now - lastCompletedCycleAt <= recentThreshold));
+    return {
+      ready,
+      state: this.#cycleFailureHandled
+        ? 'failed'
+        : this.#shutdownRequested
+          ? 'stopping'
+          : this.#cycleActive
+            ? 'working'
+            : ready
+              ? 'ready'
+              : 'starting',
+      lastCompletedCycleAt:
+        lastCompletedCycleAt === undefined
+          ? null
+          : new Date(lastCompletedCycleAt).toISOString(),
+    };
   }
 
   async start(): Promise<void> {
@@ -161,6 +199,7 @@ export class ActualWriterServiceLoop {
       return Promise.resolve();
     }
     this.#running ??= (async () => {
+      this.#cycleActive = true;
       const clearWatchdog = this.#startWatchdog(
         'operation',
         this.#options.operationTimeoutMs,
@@ -182,7 +221,9 @@ export class ActualWriterServiceLoop {
             break;
           }
         }
+        this.#lastCompletedCycleAt = (this.#options.now ?? Date.now)();
       } finally {
+        this.#cycleActive = false;
         clearWatchdog();
       }
     })().finally(() => {
@@ -244,6 +285,42 @@ export class ActualWriterServiceLoop {
       );
     }
   }
+}
+
+export function createActualWriterHealthServer(
+  loop: Pick<ActualWriterServiceLoop, 'readiness'>,
+): Server {
+  return createServer((request, response) => {
+    response.shouldKeepAlive = false;
+    const path = new URL(request.url ?? '/', 'http://actual-writer.invalid')
+      .pathname;
+    const readiness = loop.readiness();
+    const isLive = request.method === 'GET' && path === '/health/live';
+    const isReady = request.method === 'GET' && path === '/health/ready';
+    const status = isLive ? 200 : isReady && readiness.ready ? 200 : 503;
+    const body = Buffer.from(
+      JSON.stringify(
+        isLive
+          ? { status: 'ok' }
+          : isReady
+            ? {
+                status: readiness.ready ? 'ready' : 'not-ready',
+                state: readiness.state,
+                lastCompletedCycleAt: readiness.lastCompletedCycleAt,
+              }
+            : { status: 'not-found' },
+      ),
+      'utf8',
+    );
+    response.writeHead(status, {
+      'cache-control': 'no-store',
+      connection: 'close',
+      'content-length': String(body.byteLength),
+      'content-type': 'application/json; charset=utf-8',
+      'x-content-type-options': 'nosniff',
+    });
+    response.end(body);
+  });
 }
 
 async function closePartialResources(input: {
@@ -434,9 +511,11 @@ export async function createActualWriterServiceLoop(
 
 export async function startActualWriterService(): Promise<void> {
   let loop: ActualWriterServiceLoop | undefined;
+  let healthServer: Server | undefined;
   let pendingSignal: NodeJS.Signals | undefined;
   const handleSignal = (signal: NodeJS.Signals): void => {
     process.stdout.write(`received ${signal}; actual-writer shutting down\n`);
+    healthServer?.close();
     if (loop === undefined) {
       pendingSignal = signal;
       return;
@@ -461,8 +540,18 @@ export async function startActualWriterService(): Promise<void> {
     if (loop.isShuttingDown) {
       return;
     }
+    healthServer = createActualWriterHealthServer(loop);
+    healthServer.unref();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      healthServer?.once('error', rejectListen);
+      healthServer?.listen(4360, '127.0.0.1', () => {
+        healthServer?.off('error', rejectListen);
+        resolveListen();
+      });
+    });
     process.stdout.write('actual-writer ready\n');
   } catch (error) {
+    healthServer?.close();
     if (loop !== undefined) {
       await loop.shutdown().catch(() => undefined);
     }

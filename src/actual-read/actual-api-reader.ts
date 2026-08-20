@@ -545,6 +545,7 @@ export class ActualApiReadPort implements ActualReadServicePort {
     this.#freshnessStore =
       options.freshnessStore ??
       new FileActualReadFreshnessStore(
+        join(config.dataDir, 'freshness-state.v2.json'),
         join(config.dataDir, 'freshness-state.json'),
       );
     this.#now = options.now ?? (() => new Date());
@@ -633,35 +634,60 @@ export class ActualApiReadPort implements ActualReadServicePort {
         generation: freshness.generation + 1,
         state: 'syncing',
         lastAttemptAt: attemptedAt,
+        lastAttemptSummary: null,
       };
       await this.#freshnessStore.save(syncing);
       this.#freshness = syncing;
 
-      let failed = false;
-      for (const account of this.#boundAccounts().filter(
+      let succeededAccountCount = 0;
+      let failedAccountCount = 0;
+      const bankAccounts = this.#boundAccounts().filter(
         (candidate) => candidate.bankSyncEnabled,
-      )) {
+      );
+      for (const account of bankAccounts) {
         try {
           await api.runBankSync({ accountId: account.id });
+          succeededAccountCount += 1;
         } catch {
-          failed = true;
+          failedAccountCount += 1;
         }
       }
+      let budgetRefreshSucceeded = false;
       try {
         await api.sync();
         this.#budgetAsOf = attemptedAt;
+        budgetRefreshSucceeded = true;
       } catch {
-        failed = true;
+        // The fixed aggregate outcome below remains safe and account-free.
       }
+      const outcome =
+        budgetRefreshSucceeded && failedAccountCount === 0
+          ? 'succeeded'
+          : budgetRefreshSucceeded && succeededAccountCount > 0
+            ? 'partial'
+            : 'failed';
+      const anySuccessfulImport =
+        budgetRefreshSucceeded && succeededAccountCount > 0;
       const completed: PersistedActualReadFreshness = {
         ...syncing,
-        state: failed ? 'failed' : 'succeeded',
-        ...(failed ? {} : { lastSuccessfulSyncAt: attemptedAt }),
+        state: outcome,
+        ...(outcome === 'succeeded'
+          ? { lastSuccessfulSyncAt: attemptedAt }
+          : {}),
+        ...(anySuccessfulImport
+          ? { lastAnySuccessfulSyncAt: attemptedAt }
+          : {}),
+        lastAttemptSummary: {
+          attemptedAccountCount: bankAccounts.length,
+          succeededAccountCount,
+          failedAccountCount,
+          budgetRefreshSucceeded,
+        },
       };
       await this.#freshnessStore.save(completed);
       this.#freshness = completed;
       return {
-        outcome: failed ? 'failed' : 'succeeded',
+        outcome,
         freshness: this.#publicFreshness(),
       };
     });
@@ -1667,6 +1693,8 @@ export class ActualApiReadPort implements ActualReadServicePort {
         state: stored.state,
         lastAttemptAt: stored.lastAttemptAt,
         lastSuccessfulSyncAt: stored.lastSuccessfulSyncAt,
+        lastAnySuccessfulSyncAt: stored.lastAnySuccessfulSyncAt,
+        lastAttemptSummary: stored.lastAttemptSummary,
       });
       const unchanged = query.previousWatermark === watermark;
       return {
@@ -1881,7 +1909,7 @@ export class ActualApiReadPort implements ActualReadServicePort {
         override,
       ),
       actualBudgetAsOf: this.#budgetAsOf,
-      bankFeedAsOf: stored.lastSuccessfulSyncAt,
+      bankFeedAsOf: stored.lastAnySuccessfulSyncAt,
       expectedBankDelayHours: this.#config.readContract.expectedBankDelayHours,
     };
   }

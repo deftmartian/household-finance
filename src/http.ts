@@ -41,6 +41,12 @@ const jsonHeaders = {
   'content-type': 'application/json; charset=utf-8',
   'x-content-type-options': 'nosniff',
 };
+const metricsHeaders = {
+  'cache-control': 'no-store',
+  connection: 'close',
+  'content-type': 'text/plain; version=0.0.4; charset=utf-8',
+  'x-content-type-options': 'nosniff',
+};
 const maxWebhookBytes = 1_000_000;
 const requestTimeoutMs = 30_000;
 const headersTimeoutMs = 10_000;
@@ -48,6 +54,11 @@ const maxHeaderBytes = 16 * 1024;
 
 export interface HttpWorker {
   kick(): Promise<unknown>;
+}
+
+export interface OperationalHttpMetrics {
+  status(): Readonly<Record<string, unknown>>;
+  prometheus(): string;
 }
 
 export interface ProductionHttpDependencies {
@@ -69,6 +80,7 @@ export interface ProductionHttpDependencies {
   actualUpdateTalkInteractionWorker: HttpWorker;
   actualUpdateTalkDecisionHandler: ActualUpdateTalkDecisionHandler;
   talkClarificationHandler: Pick<TalkClarificationHandler, 'handle'>;
+  operationalMetrics: OperationalHttpMetrics;
 }
 
 export interface HttpDependencies extends Partial<ProductionHttpDependencies> {
@@ -95,6 +107,7 @@ const productionDependencyNames = [
   'actualUpdateTalkInteractionWorker',
   'actualUpdateTalkDecisionHandler',
   'talkClarificationHandler',
+  'operationalMetrics',
 ] as const satisfies readonly (keyof ProductionHttpDependencies)[];
 
 function requireProductionDependencies(
@@ -136,6 +149,16 @@ function sendJson(
   };
   response.once('close', wipe);
   response.end(payload, wipe);
+}
+
+function sendMetrics(response: ServerResponse, body: string): void {
+  const payload = Buffer.from(body, 'utf8');
+  response.shouldKeepAlive = false;
+  response.writeHead(200, {
+    ...metricsHeaders,
+    'content-length': String(payload.byteLength),
+  });
+  response.end(payload);
 }
 
 export async function readRequestBody(
@@ -209,6 +232,35 @@ export function createHttpServer(
           status: 'ready',
           intakeMode: config.intakeMode,
         });
+        return;
+      }
+
+      if (
+        request.method === 'GET' &&
+        requestPath === '/health/status' &&
+        config.intakeMode === 'production'
+      ) {
+        sendJson(
+          response,
+          200,
+          (
+            productionRuntime as ProductionHttpDependencies
+          ).operationalMetrics.status(),
+        );
+        return;
+      }
+
+      if (
+        request.method === 'GET' &&
+        requestPath === '/metrics' &&
+        config.intakeMode === 'production'
+      ) {
+        sendMetrics(
+          response,
+          (
+            productionRuntime as ProductionHttpDependencies
+          ).operationalMetrics.prometheus(),
+        );
         return;
       }
 

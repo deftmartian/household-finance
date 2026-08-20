@@ -93,7 +93,7 @@ function validPreflightResponse(
   return responseWithZdr(
     {
       status: 'completed',
-      model: 'grok-4.5',
+      model: 'grok-4.6',
       output: [
         {
           type: 'message',
@@ -119,7 +119,7 @@ function validPreflightResponse(
 function validDocumentResponse(): Response {
   return responseWithZdr({
     status: 'completed',
-    model: 'grok-4.5',
+    model: 'grok-4.6',
     output: [
       {
         type: 'reasoning',
@@ -235,8 +235,8 @@ describe('xAI Responses receipt adapter', () => {
     expect(run.proposal.documentDisposition).toBe('uncertain');
     expect(run.metadata).toEqual({
       provider: 'xai',
-      requestedModel: 'grok-4.5',
-      resolvedModel: 'grok-4.5',
+      requestedModel: 'grok-4.6',
+      resolvedModel: 'grok-4.6',
       preflightAttempts: 1,
       documentAttempts: 1,
       durationMs: expect.any(Number),
@@ -439,7 +439,7 @@ describe('xAI Responses receipt adapter', () => {
     const fetchImplementation: typeof fetch = async () =>
       responseWithZdr({
         status: 'completed',
-        model: 'grok-4.5',
+        model: 'grok-4.6',
         output: [
           {
             type: 'message',
@@ -486,7 +486,7 @@ describe('xAI Responses receipt adapter', () => {
       name: 'an invalid structured acknowledgement',
       response: {
         status: 'completed',
-        model: 'grok-4.5',
+        model: 'grok-4.6',
         output: [
           {
             type: 'message',
@@ -540,7 +540,7 @@ describe('xAI Responses receipt adapter', () => {
       calls += 1;
       return responseWithZdr({
         status: 'completed',
-        model: 'grok-4.5',
+        model: 'grok-4.6',
         output: [],
         usage: { cost_in_usd_ticks: 100 },
       });
@@ -570,7 +570,7 @@ describe('xAI Responses receipt adapter', () => {
         ? validPreflightResponse()
         : responseWithZdr({
             status: 'completed',
-            model: 'grok-4.5',
+            model: 'grok-4.6',
             output: [
               {
                 type: 'message',
@@ -611,7 +611,7 @@ describe('xAI Responses receipt adapter', () => {
         ? validPreflightResponse()
         : responseWithZdr({
             status: 'completed',
-            model: 'grok-4.5',
+            model: 'grok-4.6',
             output: [
               {
                 type: 'message',
@@ -650,7 +650,7 @@ describe('xAI Responses receipt adapter', () => {
         ? validPreflightResponse()
         : responseWithZdr({
             status: 'completed',
-            model: 'grok-4.5',
+            model: 'grok-4.6',
             output: [
               {
                 type: 'message',
@@ -720,7 +720,7 @@ describe('xAI Responses receipt adapter', () => {
         ? validPreflightResponse()
         : responseWithZdr({
             status: 'completed',
-            model: 'grok-4.5',
+            model: 'grok-4.6',
             output: [
               {
                 type: 'message',

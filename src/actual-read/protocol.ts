@@ -153,9 +153,23 @@ const freshness = z.strictObject({
   bankFeedAsOf: z.iso.datetime({ offset: true }).nullable(),
   lastAttemptAt: z.iso.datetime({ offset: true }).nullable(),
   lastSuccessfulSyncAt: z.iso.datetime({ offset: true }).nullable(),
-  lastOutcome: z.enum(['never', 'succeeded', 'failed', 'skipped-recent']),
+  lastOutcome: z.enum([
+    'never',
+    'succeeded',
+    'partial',
+    'failed',
+    'skipped-recent',
+  ]),
   isFresh: z.boolean(),
   expectedBankDelayHours: z.number().int().safe().min(0).max(168),
+  lastAttemptSummary: z
+    .strictObject({
+      attemptedAccountCount: z.number().int().safe().positive(),
+      succeededAccountCount: z.number().int().safe().nonnegative(),
+      failedAccountCount: z.number().int().safe().nonnegative(),
+      budgetRefreshSucceeded: z.boolean(),
+    })
+    .optional(),
 });
 
 const withFreshness = { freshness };
@@ -546,7 +560,7 @@ export const receiptRecordListResultSchema = z.strictObject({
 });
 
 export const actualReadSyncResultSchema = z.strictObject({
-  outcome: z.enum(['succeeded', 'failed', 'skipped-recent']),
+  outcome: z.enum(['succeeded', 'partial', 'failed', 'skipped-recent']),
   freshness,
 });
 
