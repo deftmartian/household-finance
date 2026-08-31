@@ -273,12 +273,55 @@ describe('XaiStructuredClient', () => {
     expect(fetchImplementation).toHaveBeenCalledTimes(3);
   });
 
-  it('fails closed when the provider omits the ZDR attestation', async () => {
+  it('recovers when one content-free preflight omits the ZDR attestation', async () => {
+    const onRequestFailure = vi.fn();
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ acknowledged: true }, false))
+      .mockResolvedValueOnce(response({ acknowledged: true }))
+      .mockResolvedValueOnce(response({ kind: 'ok' }));
     const client = new XaiStructuredClient({
       apiKey: 'test-key',
-      fetchImplementation: vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(response({ acknowledged: true }, false)),
+      fetchImplementation,
+      maxAttempts: 2,
+      retryBaseDelayMs: 0,
+      sleepImplementation: async () => undefined,
+      onRequestFailure,
+    });
+
+    await expect(
+      client.run({
+        schemaName: 'test_schema_v1',
+        schema: { type: 'object' },
+        systemPrompt: 'Return the strict test value.',
+        payload: { private: 'household-value' },
+      }),
+    ).resolves.toMatchObject({
+      value: { kind: 'ok' },
+      metadata: { preflightAttempts: 2, requestAttempts: 1 },
+    });
+    expect(onRequestFailure).not.toHaveBeenCalled();
+    expect(fetchImplementation).toHaveBeenCalledTimes(3);
+    expect(String(fetchImplementation.mock.calls[0]?.[1]?.body)).not.toContain(
+      'household-value',
+    );
+    expect(String(fetchImplementation.mock.calls[1]?.[1]?.body)).not.toContain(
+      'household-value',
+    );
+  });
+
+  it('fails closed after bounded content-free ZDR preflight attempts', async () => {
+    const onRequestFailure = vi.fn();
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(response({ acknowledged: true }, false));
+    const client = new XaiStructuredClient({
+      apiKey: 'test-key',
+      fetchImplementation,
+      maxAttempts: 2,
+      retryBaseDelayMs: 0,
+      sleepImplementation: async () => undefined,
+      onRequestFailure,
     });
     await expect(
       client.run({
@@ -291,6 +334,39 @@ describe('XaiStructuredClient', () => {
       code: 'zdr-required',
       phase: 'preflight',
     } satisfies Partial<XaiStructuredClientError>);
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+    expect(onRequestFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('never retries a household request whose response omits ZDR', async () => {
+    const onRequestFailure = vi.fn();
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ acknowledged: true }))
+      .mockResolvedValueOnce(response({ kind: 'unsafe' }, false))
+      .mockResolvedValueOnce(response({ kind: 'must-not-retry' }));
+    const client = new XaiStructuredClient({
+      apiKey: 'test-key',
+      fetchImplementation,
+      maxAttempts: 3,
+      retryBaseDelayMs: 0,
+      sleepImplementation: async () => undefined,
+      onRequestFailure,
+    });
+
+    await expect(
+      client.run({
+        schemaName: 'test_schema_v1',
+        schema: { type: 'object' },
+        systemPrompt: 'Return the strict test value.',
+        payload: { private: 'household-value' },
+      }),
+    ).rejects.toMatchObject({
+      code: 'zdr-required',
+      phase: 'request',
+    } satisfies Partial<XaiStructuredClientError>);
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+    expect(onRequestFailure).toHaveBeenCalledTimes(1);
   });
 
   it('runs a client-side ZDR tool loop and returns a strict final value', async () => {

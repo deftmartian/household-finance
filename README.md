@@ -108,7 +108,10 @@ fixed, aggregate operational state only: configured model/reasoning/revision,
 bank-sync freshness and account counts, queue age/counts, worker failures, and
 model latency/cost/failure counters. These endpoints never include account
 identities, amounts, prompts, receipts, or model payloads. The default model is
-the exact `grok-4.6` identifier with high reasoning effort.
+the exact `grok-4.6` identifier with high reasoning effort. Bank freshness and
+outcomes are diagnostic fields: a stale, partial, or failed bank refresh does
+not degrade process health because manual refresh can be the normal operating
+policy. Overdue operational queues still degrade `/health/status`.
 
 The repository includes a generic Compose setup for `finance-bot`,
 `document-preparer`, `actual-reader`, `actual-writer`, and `actual-server`.

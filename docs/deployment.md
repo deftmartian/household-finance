@@ -84,6 +84,14 @@ partial outcome and privacy-safe attempted/succeeded/failed account counts.
 The reader also maintains a v1 freshness-state mirror so its persisted state
 can be rolled back independently.
 
+The finance-bot uses a dedicated long-timeout reader client for scheduled bank
+syncs so the aggregate result reaches its health and metrics endpoints even
+when an import takes longer than an interactive Actual read. Bank freshness and
+partial or failed outcomes remain diagnostic only; they do not degrade process
+health. Operators may use a manual refresh cadence without turning normal bank
+staleness into an availability incident. Queue age and other operational
+failures remain actionable.
+
 To deploy manually:
 
 ```sh

@@ -232,7 +232,6 @@ export interface OperationalMetricsOptions {
   readonly model: string;
   readonly reasoningEffort: string;
   readonly sourceRevision?: string;
-  readonly expectedBankSyncIntervalMs: number;
   readonly queueHealth: OperationalQueueHealthReader;
   readonly now?: () => Date;
 }
@@ -359,17 +358,8 @@ export class OperationalMetrics {
     );
     const freshness = this.#bankSync?.freshness;
     const lastAny = freshness?.bankFeedAsOf ?? null;
-    const bankStale =
-      lastAny !== null &&
-      now.valueOf() - Date.parse(lastAny) >
-        this.#options.expectedBankSyncIntervalMs + 6 * 60 * 60 * 1_000;
-    const degraded =
-      overdue ||
-      bankStale ||
-      freshness?.lastOutcome === 'partial' ||
-      freshness?.lastOutcome === 'failed';
     return {
-      status: degraded ? 'degraded' : 'ok',
+      status: overdue ? 'degraded' : 'ok',
       build: {
         model: this.#options.model,
         reasoningEffort: this.#options.reasoningEffort,

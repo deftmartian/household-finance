@@ -121,4 +121,31 @@ describe('shared xAI Responses transport', () => {
     ).rejects.toMatchObject({ code: 'zdr-required' });
     expect(fetchImplementation).toHaveBeenCalledTimes(2);
   });
+
+  it('retries a missing ZDR header only when a content-free caller opts in', async () => {
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(response(200, '{"ok":true}'));
+    const transport = new XaiResponsesTransport({
+      apiKey: 'test-key',
+      attemptTimeoutMs: 1_000,
+      maxAttempts: 2,
+      retryBaseDelayMs: 0,
+      maxResponseBytes: 1_024,
+      fetchImplementation,
+      sleepImplementation: async () => undefined,
+    });
+
+    await expect(
+      transport.request(
+        '{"content":"zdr-preflight-only"}',
+        (text) => JSON.parse(text),
+        undefined,
+        undefined,
+        { retryMissingZdr: true },
+      ),
+    ).resolves.toMatchObject({ value: { ok: true }, attempts: 2 });
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
 });

@@ -42,6 +42,11 @@ export interface XaiResponsesTransportResult<T> {
   readonly attempts: number;
 }
 
+export interface XaiResponsesTransportRequestOptions {
+  /** Safe only when the request body contains no household data. */
+  readonly retryMissingZdr?: boolean;
+}
+
 const DEFAULT_BASE_URL = 'https://api.x.ai/v1';
 const DEFAULT_OVERALL_TIMEOUT_MS = 300_000;
 const MAX_RETRY_DELAY_MS = 60_000;
@@ -273,6 +278,7 @@ export class XaiResponsesTransport {
     parse: (text: string) => T,
     externalSignal?: AbortSignal,
     operationDeadline?: number,
+    requestOptions: XaiResponsesTransportRequestOptions = {},
   ): Promise<XaiResponsesTransportResult<T>> {
     const transportDeadline = this.#now() + this.#overallTimeoutMs;
     const deadline = Math.min(
@@ -323,6 +329,13 @@ export class XaiResponsesTransport {
       }
       if (!hasZeroDataRetention(response)) {
         await cancelBody(response);
+        if (
+          requestOptions.retryMissingZdr === true &&
+          attempt < this.#maxAttempts &&
+          (await this.#sleepBeforeRetry(attempt, undefined, deadline))
+        ) {
+          continue;
+        }
         throw new XaiResponsesTransportError('zdr-required');
       }
       if (response.ok) {

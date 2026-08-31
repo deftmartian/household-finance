@@ -911,6 +911,7 @@ export class XaiStructuredClient {
         parse,
         externalSignal,
         operationDeadline,
+        { retryMissingZdr: phase === 'preflight' },
       );
     } catch (error) {
       if (!(error instanceof XaiResponsesTransportError)) {

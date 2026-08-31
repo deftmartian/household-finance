@@ -248,6 +248,10 @@ export function createProductionRuntime(
     const actualReader = new ActualReadHttpClient({
       endpoint: config.questionAnswering.readerUrl,
     });
+    const scheduledActualReader = new ActualReadHttpClient({
+      endpoint: config.questionAnswering.readerUrl,
+      timeoutMs: 120_000,
+    });
     const deterministicActualReader =
       new ActualDeterministicTransactionHttpClient({
         endpoint: config.questionAnswering.readerUrl,
@@ -376,7 +380,6 @@ export function createProductionRuntime(
       ...(process.env.SOURCE_REVISION === undefined
         ? {}
         : { sourceRevision: process.env.SOURCE_REVISION }),
-      expectedBankSyncIntervalMs: config.questionAnswering.bankSyncIntervalMs,
       queueHealth,
     });
     const structuredModel = new XaiStructuredClient({
@@ -771,7 +774,7 @@ export function createProductionRuntime(
       questions: questionWorkerKick,
     });
     const bankSyncScheduler = new BankSyncScheduler({
-      reader: actualReader,
+      reader: scheduledActualReader,
       intervalMs: config.questionAnswering.bankSyncIntervalMs,
       onCompletedImportAttempt: async (result) => {
         operationalMetrics.recordBankSync(result);

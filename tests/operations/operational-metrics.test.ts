@@ -72,13 +72,12 @@ describe('operational metrics', () => {
       model: 'grok-4.6',
       reasoningEffort: 'high',
       sourceRevision: 'abc123',
-      expectedBankSyncIntervalMs: 4 * 60 * 60 * 1_000,
       queueHealth: new FixedQueueReader([
         {
           queue: 'questions',
           due: 2,
           processing: 1,
-          oldestDueAt: '2026-08-20T11:30:00.000Z',
+          oldestDueAt: '2026-08-20T11:50:00.000Z',
         },
       ]),
       now: () => now,
@@ -117,7 +116,7 @@ describe('operational metrics', () => {
     });
 
     expect(metrics.status()).toMatchObject({
-      status: 'degraded',
+      status: 'ok',
       build: {
         model: 'grok-4.6',
         reasoningEffort: 'high',
@@ -145,7 +144,6 @@ describe('operational metrics', () => {
     const metrics = new OperationalMetrics({
       model: 'grok-4.6',
       reasoningEffort: 'medium',
-      expectedBankSyncIntervalMs: 60_000,
       queueHealth: new FixedQueueReader([]),
     });
     metrics.recordModelFailure('receipt', { code: 'zdr-required' });
@@ -159,5 +157,23 @@ describe('operational metrics', () => {
     expect(metrics.prometheus()).toContain(
       'household_finance_model_mismatch_failures_total 1',
     );
+  });
+
+  it('degrades for an overdue operational queue', () => {
+    const metrics = new OperationalMetrics({
+      model: 'grok-4.6',
+      reasoningEffort: 'medium',
+      queueHealth: new FixedQueueReader([
+        {
+          queue: 'questions',
+          due: 1,
+          processing: 0,
+          oldestDueAt: '2026-08-20T11:30:00.000Z',
+        },
+      ]),
+      now: () => new Date('2026-08-20T12:00:00.000Z'),
+    });
+
+    expect(metrics.status()).toMatchObject({ status: 'degraded' });
   });
 });
