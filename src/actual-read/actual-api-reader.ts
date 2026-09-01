@@ -293,6 +293,8 @@ interface NormalizedImportedTransaction {
   readonly category: Category | undefined;
   readonly categoryStatus:
     'uncategorized' | 'contract-bound' | 'unbound' | 'split';
+  /** Actual requires a category on the on-budget side of an off-budget transfer. */
+  readonly categoryRequired: boolean;
   readonly split: boolean;
   readonly cleared: boolean;
   readonly specialKind: ActualImportedTransactionSpecialKind;
@@ -1366,9 +1368,9 @@ export class ActualApiReadPort implements ActualReadServicePort {
           !transaction.account.onBudget ||
           transaction.split ||
           transaction.categoryStatus !== 'uncategorized' ||
+          !transaction.categoryRequired ||
           transaction.alreadyLinkedReceipts.length > 0 ||
-          (transaction.specialKind !== 'ordinary' &&
-            transaction.specialKind !== 'cashback')
+          transaction.specialKind === 'refund'
         ) {
           continue;
         }
@@ -2323,6 +2325,10 @@ export class ActualApiReadPort implements ActualReadServicePort {
               line.transfer_id !== undefined && line.transfer_id !== null,
           ) ||
           transferPayees.length > 0;
+        const categoryRequired =
+          !isTransfer ||
+          (account.onBudget &&
+            transferTargets.some((candidate) => !candidate.onBudget));
         result.push({
           raw: transaction,
           transactionId,
@@ -2336,6 +2342,7 @@ export class ActualApiReadPort implements ActualReadServicePort {
           memo: sanitizeMemo(parentNotesWithoutToken),
           category,
           categoryStatus,
+          categoryRequired,
           split,
           cleared: transaction.cleared === true,
           specialKind: this.#specialKind(

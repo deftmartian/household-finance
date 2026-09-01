@@ -1360,22 +1360,70 @@ describe('Actual API read port', () => {
     });
 
     expect(result).toMatchObject({
-      matchedTransactionCount: 2,
+      matchedTransactionCount: 4,
       truncated: true,
       transactions: [
         {
-          date: '2026-07-11',
-          merchantName: 'Example Market',
-          accountName: 'Credit Card',
-          amountMinorUnits: -725,
+          date: '2026-07-08',
+          merchantName: 'Transfer: Line of Credit',
+          accountName: 'Daily Spending',
+          amountMinorUnits: -1_000,
           cleared: false,
-          kind: 'ordinary',
-          memo: 'Order [redacted-number] for [redacted-email]',
+          kind: 'debt-payment',
+          memo: null,
         },
       ],
     });
     expect(JSON.stringify(result)).not.toMatch(
       /transaction-|bank-|account-card|person@example/u,
+    );
+  });
+
+  it('includes only transfers whose on-budget side requires a category', async () => {
+    const api = new SyntheticActualReadApi();
+    api.transactions.push(
+      {
+        id: 'transaction-cross-budget-transfer',
+        account: 'account-daily',
+        date: '2026-08-01',
+        amount: 25_000,
+        imported_id: 'bank-cross-budget-transfer-1',
+        transfer_id: 'transaction-cross-budget-counterpart',
+        payee: 'payee-transfer-debt',
+      },
+      {
+        id: 'transaction-same-budget-transfer',
+        account: 'account-daily',
+        date: '2026-08-01',
+        amount: -5_000,
+        imported_id: 'bank-same-budget-transfer-1',
+        transfer_id: 'transaction-same-budget-counterpart',
+        payee: 'payee-transfer',
+      },
+    );
+    const { reader } = await initializedHarness({ api });
+
+    const result = await reader.needsCategorization({
+      startDate: '2026-08-01',
+      endDate: '2026-08-01',
+      sort: 'date-desc',
+      limit: 20,
+    });
+
+    expect(result).toMatchObject({
+      matchedTransactionCount: 1,
+      truncated: false,
+      transactions: [
+        {
+          date: '2026-08-01',
+          accountName: 'Daily Spending',
+          amountMinorUnits: 25_000,
+          kind: 'transfer',
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /transaction-|bank-|account-daily/u,
     );
   });
 

@@ -315,16 +315,17 @@ export interface NeedsCategorizationRow {
   readonly cleared: boolean;
   readonly kind: Extract<
     ActualImportedTransactionSpecialKind,
-    'ordinary' | 'cashback'
+    'ordinary' | 'cashback' | 'transfer' | 'card-payment' | 'debt-payment'
   >;
   readonly memo: string | null;
 }
 
 /**
- * Bounded candidate view for categorization. It intentionally excludes
- * transfers, payments, splits, off-budget accounts, and transactions that are
- * already categorized. Receipt and in-flight write ownership are rechecked at
- * the write boundary.
+ * Bounded candidate view for categorization. It includes the on-budget side of
+ * off-budget transfers because Actual requires a category there, while still
+ * excluding same-budget transfers, splits, off-budget accounts, and already
+ * categorized transactions. Receipt and in-flight write ownership are
+ * rechecked at the write boundary.
  */
 export interface NeedsCategorizationResult
   extends NeedsCategorizationQuery, ActualReadResult {

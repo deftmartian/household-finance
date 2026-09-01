@@ -420,7 +420,13 @@ const needsCategorizationTransaction = z.strictObject({
   accountName: name,
   amountMinorUnits: safeMoney,
   cleared: z.boolean(),
-  kind: z.enum(['ordinary', 'cashback']),
+  kind: z.enum([
+    'ordinary',
+    'cashback',
+    'transfer',
+    'card-payment',
+    'debt-payment',
+  ]),
   memo: z
     .string()
     .max(240)

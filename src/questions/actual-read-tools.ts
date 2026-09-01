@@ -82,7 +82,7 @@ export function actualReadTools(
   return [
     readTool(
       'needs_categorization',
-      'Return candidate imported transactions over at most one year that may need categorization: uncategorized, unsplit, on-budget ordinary purchases or cashback. Receipt reservations are rechecked at the write boundary, so treat these as candidates rather than a guaranteed actionable queue. Use this for questions such as how many transactions may need categorization or which uncategorized transactions remain. The count covers every candidate even when the returned row list is truncated.',
+      'Return candidate imported transactions over at most one year that may need categorization: uncategorized, unsplit, on-budget ordinary purchases, cashback, and the on-budget side of an off-budget transfer for which Actual requires a category. Same-budget transfers remain excluded. Receipt reservations are rechecked at the write boundary, so treat these as candidates rather than a guaranteed actionable queue. Use this for questions such as how many transactions may need categorization or which uncategorized transactions remain. The count covers every candidate even when the returned row list is truncated.',
       needsCategorizationQuerySchema,
       parseNeedsCategorizationQuery,
       (query) => reader.needsCategorization(query),
