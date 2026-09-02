@@ -358,6 +358,7 @@ function migrateInboundMediaTypes(database: Database.Database): void {
   }
   database.exec(`
     PRAGMA foreign_keys = OFF;
+    DROP TABLE IF EXISTS attachment_inbound_events_v2;
     CREATE TABLE attachment_inbound_events_v2 (
       id TEXT PRIMARY KEY,
       idempotency_key TEXT NOT NULL UNIQUE,
@@ -390,7 +391,34 @@ function migrateInboundMediaTypes(database: Database.Database): void {
       ),
       received_at TEXT NOT NULL
     ) STRICT;
-    INSERT INTO attachment_inbound_events_v2 SELECT * FROM attachment_inbound_events;
+    INSERT INTO attachment_inbound_events_v2 (
+      id,
+      idempotency_key,
+      backend_url,
+      room_token,
+      actor_id,
+      message_id,
+      file_id,
+      source_etag,
+      source_size_bytes,
+      source_media_type,
+      caption_hint,
+      received_at
+    )
+    SELECT
+      id,
+      idempotency_key,
+      backend_url,
+      room_token,
+      actor_id,
+      message_id,
+      file_id,
+      source_etag,
+      source_size_bytes,
+      source_media_type,
+      caption_hint,
+      received_at
+    FROM attachment_inbound_events;
     DROP TABLE attachment_inbound_events;
     ALTER TABLE attachment_inbound_events_v2 RENAME TO attachment_inbound_events;
     PRAGMA foreign_keys = ON;

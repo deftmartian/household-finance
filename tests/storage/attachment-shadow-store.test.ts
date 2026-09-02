@@ -617,6 +617,114 @@ describe('AttachmentShadowStore', () => {
     store.close();
   });
 
+  it('rebuilds a live inbound CHECK when caption_hint was added after received_at', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'hf-attachment-'));
+    const databasePath = join(directory, 'attachments.sqlite');
+    const legacy = new Database(databasePath);
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE attachment_inbound_events (
+        id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        backend_url TEXT NOT NULL,
+        room_token TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        source_etag TEXT NOT NULL,
+        source_size_bytes INTEGER NOT NULL,
+        source_media_type TEXT NOT NULL CHECK (
+          source_media_type IN (
+            'image/jpeg',
+            'image/png',
+            'application/pdf'
+          )
+        ),
+        received_at TEXT NOT NULL
+      ) STRICT;
+      ALTER TABLE attachment_inbound_events ADD COLUMN caption_hint TEXT;
+      CREATE TABLE attachment_shadow_items (
+        event_id TEXT PRIMARY KEY REFERENCES attachment_inbound_events(id),
+        status TEXT NOT NULL,
+        archive_path TEXT,
+        source_sha256 TEXT,
+        proposal_json TEXT,
+        model_metadata_json TEXT,
+        error_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE attachment_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        event_id TEXT NOT NULL REFERENCES attachment_inbound_events(id),
+        payload_json TEXT NOT NULL,
+        state TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        available_at TEXT NOT NULL,
+        locked_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      ) STRICT;
+      CREATE TABLE attachment_audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL REFERENCES attachment_inbound_events(id),
+        action TEXT NOT NULL,
+        detail_json TEXT NOT NULL,
+        occurred_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE attachment_inbound_events_v2 (
+        id TEXT PRIMARY KEY
+      ) STRICT;
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO attachment_inbound_events (
+           id, idempotency_key, backend_url, room_token, actor_id, message_id,
+           file_id, source_etag, source_size_bytes, source_media_type, received_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        '8dfc1bd9-e07a-4c62-9d58-9529361536b9',
+        'attachment:legacy-jpeg',
+        'https://cloud.example.test',
+        'finance-room',
+        'alex',
+        '41',
+        '122',
+        'legacy-etag',
+        100,
+        'image/jpeg',
+        now,
+      );
+    legacy.close();
+
+    const store = new AttachmentShadowStore(databasePath);
+    try {
+      expect(
+        store.getInbound('8dfc1bd9-e07a-4c62-9d58-9529361536b9'),
+      ).toMatchObject({
+        attachment: { mediaType: 'image/jpeg' },
+      });
+      const recorded = store.recordInbound({
+        ...input('attachment:migrated-csv-after-alter'),
+        attachment: {
+          ...input().attachment,
+          fileId: '125',
+          mediaType: 'text/csv',
+        },
+      });
+      expect(store.getInbound(recorded.event.id)?.attachment.mediaType).toBe(
+        'text/csv',
+      );
+    } finally {
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rebuilds a live inbound CHECK so export media types can be stored', () => {
     const directory = mkdtempSync(join(tmpdir(), 'hf-attachment-'));
     const databasePath = join(directory, 'attachments.sqlite');
