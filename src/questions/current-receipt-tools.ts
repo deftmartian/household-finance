@@ -2,8 +2,9 @@ import { buildExtractedReceiptMatchIntent } from '../matching/receipt-transactio
 import {
   assessReceiptModelProposal,
   canonicalizeHouseholdReceiptCurrency,
+  derivedExportProposalEventId,
+  parseReceiptModelProposals,
   receiptLineItemsSupportAllocation,
-  receiptModelProposalV1Schema,
   type ReceiptModelProposalV1,
 } from '../model/index.js';
 import type { AttachmentShadowStore } from '../storage/attachment-shadow-store.js';
@@ -88,6 +89,53 @@ function amount(currency: string | null, valueMinor: number | null) {
     display: `${currency} ${String(minor / 100n)}.${String(
       minor % 100n,
     ).padStart(2, '0')}`,
+  };
+}
+
+function receiptSummary(
+  receiptId: string,
+  receipt: ReceiptModelProposalV1,
+  includeMatching: boolean,
+) {
+  const items = receipt.lineItems
+    .slice(0, MAXIMUM_VISIBLE_ITEMS)
+    .map((item) => ({
+      description:
+        item.description === null ? null : visibleText(item.description),
+      quantity: item.quantity,
+      unitPriceMinorUnits: item.unitPriceMinor,
+      totalMinorUnits: item.totalMinor,
+    }));
+  const missingOrUnclear: string[] = [];
+  if (receipt.merchant.value === null) missingOrUnclear.push('merchant');
+  if (receipt.purchaseDate.value === null) {
+    missingOrUnclear.push('purchase date');
+  }
+  if (receipt.currency.value === null) missingOrUnclear.push('currency');
+  if (receipt.amounts.total.valueMinor === null) missingOrUnclear.push('total');
+  if (receipt.lineItems.length === 0) missingOrUnclear.push('line items');
+  const itemDetailsComplete = receiptLineItemsSupportAllocation(receipt);
+  if (!itemDetailsComplete && !missingOrUnclear.includes('line items')) {
+    missingOrUnclear.push('line items');
+  }
+  return {
+    documentDisposition: receipt.documentDisposition,
+    merchant:
+      receipt.merchant.value === null
+        ? null
+        : visibleText(receipt.merchant.value),
+    purchaseDate: receipt.purchaseDate.value,
+    currency: receipt.currency.value,
+    total: amount(receipt.currency.value, receipt.amounts.total.valueMinor),
+    items,
+    recordedItemCount: receipt.lineItems.length,
+    omittedItemCount: Math.max(0, receipt.lineItems.length - items.length),
+    itemDetailsComplete,
+    missingOrUnclear,
+    paymentKind: receipt.paymentEvidence.kind,
+    ...(includeMatching
+      ? { matching: matchingStatus(receiptId, receipt) }
+      : {}),
   };
 }
 
@@ -234,11 +282,12 @@ export function currentReceiptReadTool(
               : 'still-processing',
         };
       }
-      const parsed = receiptModelProposalV1Schema.safeParse(shadow.proposal);
-      if (!parsed.success) {
+      const proposals = parseReceiptModelProposals(shadow.proposal)?.map(
+        (proposal) => canonicalizeHouseholdReceiptCurrency(proposal),
+      );
+      if (proposals === undefined || proposals[0] === undefined) {
         return { receiptAvailable: false, reason: 'invalid-extraction' };
       }
-      const receipt = canonicalizeHouseholdReceiptCurrency(parsed.data);
       const relatedPhotos = options.attachments
         .findReceiptsByRoomMessage(event.roomToken, event.messageId)
         .filter((candidate) => !candidate.ignored);
@@ -246,84 +295,66 @@ export function currentReceiptReadTool(
         (candidate) => candidate.shadow.status === 'failed',
       ).length;
       const activeSameMessagePhotos = relatedPhotos.length;
-      const items = receipt.lineItems
-        .slice(0, MAXIMUM_VISIBLE_ITEMS)
-        .map((item) => ({
-          description:
-            item.description === null ? null : visibleText(item.description),
-          quantity: item.quantity,
-          unitPriceMinorUnits: item.unitPriceMinor,
-          totalMinorUnits: item.totalMinor,
-        }));
-      const missingOrUnclear: string[] = [];
-      if (receipt.merchant.value === null) missingOrUnclear.push('merchant');
-      if (receipt.purchaseDate.value === null)
-        missingOrUnclear.push('purchase date');
-      if (receipt.currency.value === null) missingOrUnclear.push('currency');
-      if (receipt.amounts.total.valueMinor === null)
-        missingOrUnclear.push('total');
-      if (receipt.lineItems.length === 0) missingOrUnclear.push('line items');
-      const itemDetailsComplete = receiptLineItemsSupportAllocation(receipt);
-      if (!itemDetailsComplete && !missingOrUnclear.includes('line items')) {
-        missingOrUnclear.push('line items');
+      const relatedMatching =
+        failedRelatedPhotoCount > 0
+          ? {
+              matchable: false as const,
+              processingStatus:
+                'needs-review-before-background-matching' as const,
+              outcome: 'not-reported' as const,
+              reason: 'related-photo-failed' as const,
+              explanation:
+                'Another picture in this Talk post could not be read. Tell me to drop that picture, then resend it if the receipt needs it.',
+            }
+          : activeSameMessagePhotos > 1
+            ? {
+                matchable: false as const,
+                processingStatus:
+                  'needs-review-before-background-matching' as const,
+                outcome: 'not-reported' as const,
+                reason: 'related-photos-pending-merge' as const,
+                explanation:
+                  'This Talk post has more than one picture. They must be combined or separated before bank matching, so do not judge the receipt from only this photo.',
+              }
+            : undefined;
+      const workflow = {
+        ignored: false,
+        originalArchived: shadow.archivePath !== undefined,
+        captionAlreadyStoredWithReceipt: event.captionHint !== undefined,
+        bankTransactionCreatedFromReceipt: false,
+        currentPhotoOnly: true,
+        relatedPhotosCombinedBeforeLedgerUpdate: true,
+        relatedPhotoCount: activeSameMessagePhotos,
+      };
+      const caption =
+        event.captionHint === undefined ? null : visibleText(event.captionHint);
+      if (proposals.length === 1) {
+        return {
+          receiptAvailable: true,
+          authenticatedHouseholdCaption: caption,
+          receipt: receiptSummary(event.id, proposals[0], false),
+          workflow: {
+            ...workflow,
+            matching: relatedMatching ?? matchingStatus(event.id, proposals[0]),
+          },
+        };
       }
-
       return {
         receiptAvailable: true,
-        authenticatedHouseholdCaption:
-          event.captionHint === undefined
-            ? null
-            : visibleText(event.captionHint),
-        receipt: {
-          documentDisposition: receipt.documentDisposition,
-          merchant:
-            receipt.merchant.value === null
-              ? null
-              : visibleText(receipt.merchant.value),
-          purchaseDate: receipt.purchaseDate.value,
-          currency: receipt.currency.value,
-          total: amount(
-            receipt.currency.value,
-            receipt.amounts.total.valueMinor,
+        authenticatedHouseholdCaption: caption,
+        receiptCount: proposals.length,
+        receipts: proposals.map((proposal, index) =>
+          receiptSummary(
+            derivedExportProposalEventId(event.id, index),
+            proposal,
+            relatedMatching === undefined,
           ),
-          items,
-          recordedItemCount: receipt.lineItems.length,
-          omittedItemCount: Math.max(
-            0,
-            receipt.lineItems.length - items.length,
-          ),
-          itemDetailsComplete,
-          missingOrUnclear,
-          paymentKind: receipt.paymentEvidence.kind,
-        },
+        ),
         workflow: {
-          ignored: false,
-          originalArchived: shadow.archivePath !== undefined,
-          captionAlreadyStoredWithReceipt: event.captionHint !== undefined,
-          bankTransactionCreatedFromReceipt: false,
-          currentPhotoOnly: true,
-          relatedPhotosCombinedBeforeLedgerUpdate: true,
-          relatedPhotoCount: activeSameMessagePhotos,
-          matching:
-            failedRelatedPhotoCount > 0
-              ? {
-                  matchable: false,
-                  processingStatus: 'needs-review-before-background-matching',
-                  outcome: 'not-reported',
-                  reason: 'related-photo-failed',
-                  explanation:
-                    'Another picture in this Talk post could not be read. Tell me to drop that picture, then resend it if the receipt needs it.',
-                }
-              : activeSameMessagePhotos > 1
-                ? {
-                    matchable: false,
-                    processingStatus: 'needs-review-before-background-matching',
-                    outcome: 'not-reported',
-                    reason: 'related-photos-pending-merge',
-                    explanation:
-                      'This Talk post has more than one picture. They must be combined or separated before bank matching, so do not judge the receipt from only this photo.',
-                  }
-                : matchingStatus(event.id, receipt),
+          ...workflow,
+          ...(relatedMatching === undefined
+            ? {}
+            : { matching: relatedMatching }),
         },
       };
     },

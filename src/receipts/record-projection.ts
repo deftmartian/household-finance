@@ -8,7 +8,9 @@ import {
 } from '../actual-receipt-note/index.js';
 import {
   canonicalizeHouseholdReceiptCurrency,
-  receiptModelProposalV1Schema,
+  derivedExportProposalEventId,
+  derivedExportProposalSourceSha256,
+  parseReceiptModelProposals,
 } from '../model/index.js';
 import {
   canonicalizeHouseholdFinanceReceiptHouseholdNotes,
@@ -1010,11 +1012,9 @@ function canonicalPhotoCandidates(
   const candidates: ReceiptPhotoCandidate[] = [];
   let invalid = 0;
   for (const item of completed) {
-    const proposal = receiptModelProposalV1Schema.safeParse(
-      item.shadow.proposal,
-    );
+    const proposals = parseReceiptModelProposals(item.shadow.proposal);
     if (
-      !proposal.success ||
+      proposals === undefined ||
       !canonicalUuid.safeParse(item.event.id).success ||
       !/^[a-f0-9]{64}$/.test(item.shadow.sourceSha256) ||
       item.shadow.archivePath === undefined ||
@@ -1023,23 +1023,28 @@ function canonicalPhotoCandidates(
       invalid += 1;
       continue;
     }
-    candidates.push({
-      eventId: item.event.id,
-      roomToken: item.event.roomToken,
-      actorId: item.event.actorId,
-      messageId: item.event.messageId,
-      receivedAt: item.event.receivedAt,
-      fileId: item.event.attachment.fileId,
-      archivePath: item.shadow.archivePath,
-      mediaType: item.event.attachment.mediaType,
-      sourceSha256: item.shadow.sourceSha256,
-      extractedAt: item.shadow.updatedAt,
-      modelMetadata: item.shadow.modelMetadata,
-      receipt: canonicalizeHouseholdReceiptCurrency(proposal.data),
-      ...(item.event.captionHint === undefined
-        ? {}
-        : { captionHint: item.event.captionHint }),
-    });
+    for (const [index, proposal] of proposals.entries()) {
+      candidates.push({
+        eventId: derivedExportProposalEventId(item.event.id, index),
+        roomToken: item.event.roomToken,
+        actorId: item.event.actorId,
+        messageId: item.event.messageId,
+        receivedAt: item.event.receivedAt,
+        fileId: item.event.attachment.fileId,
+        archivePath: item.shadow.archivePath,
+        mediaType: item.event.attachment.mediaType,
+        sourceSha256: derivedExportProposalSourceSha256(
+          item.shadow.sourceSha256,
+          index,
+        ),
+        extractedAt: item.shadow.updatedAt,
+        modelMetadata: item.shadow.modelMetadata,
+        receipt: canonicalizeHouseholdReceiptCurrency(proposal),
+        ...(item.event.captionHint === undefined
+          ? {}
+          : { captionHint: item.event.captionHint }),
+      });
+    }
   }
   return { candidates, invalid };
 }

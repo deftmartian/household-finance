@@ -9,6 +9,15 @@ import {
   type TalkVoiceAttachmentMediaType,
   type TalkVoiceAttachmentReference,
 } from '../talk/index.js';
+import {
+  exportSniffMatchesDeclared,
+  sniffReceiptExportMediaType,
+} from '../documents/export-document.js';
+import {
+  isReceiptDocumentMediaType,
+  isReceiptExportMediaType,
+  normalizeMediaType,
+} from '../documents/receipt-media-types.js';
 
 export interface WebDavFileSourceOptions {
   baseUrl: string;
@@ -204,7 +213,7 @@ function canonicalInteger(value: string): number | undefined {
 }
 
 function normalizedMediaType(value: string): string {
-  return value.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  return normalizeMediaType(value);
 }
 
 function normalizedEtag(value: string): string {
@@ -255,6 +264,10 @@ function sniffMediaType(
   if (bytes.length >= 5 && bytes.subarray(0, 5).toString('ascii') === '%PDF-') {
     return 'application/pdf';
   }
+  const exportType = sniffReceiptExportMediaType(bytes);
+  if (exportType !== undefined) {
+    return exportType;
+  }
   if (
     bytes.length >= 12 &&
     bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
@@ -278,9 +291,16 @@ function mediaTypeMatches(
   declared: TalkAttachmentMediaType | TalkVoiceAttachmentMediaType,
   sniffed: TalkAttachmentMediaType | TalkVoiceAttachmentMediaType | undefined,
 ): boolean {
+  if (declared === sniffed) {
+    return true;
+  }
+  if (declared === 'audio/mpeg' && sniffed === 'audio/mp4') {
+    return true;
+  }
   return (
-    declared === sniffed ||
-    (declared === 'audio/mpeg' && sniffed === 'audio/mp4')
+    isReceiptExportMediaType(declared) &&
+    (sniffed === undefined || isReceiptDocumentMediaType(sniffed)) &&
+    exportSniffMatchesDeclared(declared, sniffed)
   );
 }
 

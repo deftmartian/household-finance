@@ -204,6 +204,24 @@ function markLatestApplied(
 }
 
 describe('ReceiptRecordPublicationWorkflow', () => {
+  it('publishes each structured-export order as its own receipt', () => {
+    const second = proposal('Amazon', 5_678, 'Gadget');
+    second.purchaseDate = field('2026-07-02');
+    const shadow = completed(1, { sourceSha256: 'a'.repeat(64) });
+    shadow.event.attachment.mediaType = 'application/json';
+    shadow.shadow.proposal = {
+      schemaVersion: 'receipt-model-proposal-set.v1',
+      proposals: [proposal('Amazon', 1_234, 'Widget'), second],
+    };
+    const { workflow } = setup([shadow]);
+    expect(workflow.runOnce()).toMatchObject({
+      scanned: 1,
+      candidates: 2,
+      bundles: 2,
+      published: 2,
+    });
+  });
+
   it('bundles same-message photos, publishes once, and gates projection on Actual read-back', () => {
     const shadows = [
       completed(1, {

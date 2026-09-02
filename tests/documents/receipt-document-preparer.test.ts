@@ -98,6 +98,29 @@ describe('ReceiptDocumentPreparer', () => {
     throw new Error('Expected image preparation to fail');
   });
 
+  it('prepares JSON and CSV exports as a single UTF-8 text page', async () => {
+    const json = Buffer.from(
+      '[{"orderDate":"2026-07-01","totalAmount":12.34}]',
+      'utf8',
+    );
+    const prepared = await new ReceiptDocumentPreparer().prepare(
+      source(json, 'application/json'),
+    );
+    expect(prepared.pages).toHaveLength(1);
+    expect(prepared.pages[0]?.mediaType).toBe('text/plain');
+    expect(new TextDecoder().decode(prepared.pages[0]?.bytes)).toContain(
+      '"orderDate": "2026-07-01"',
+    );
+
+    const csv = Buffer.from('Date,Total\n2026-07-01,12.34\n', 'utf8');
+    const csvPrepared = await new ReceiptDocumentPreparer().prepare(
+      source(csv, 'text/csv'),
+    );
+    expect(new TextDecoder().decode(csvPrepared.pages[0]?.bytes)).toContain(
+      'Date,Total',
+    );
+  });
+
   it('rejects an excessive PDF page count before model transmission', async () => {
     const page = await imageBytes('jpeg', 8, 8);
     const rasterizer: PdfRasterizer = {

@@ -6,11 +6,14 @@ import {
 } from '../domain/idempotency.js';
 import { ReceiptDocumentPreparationError } from '../documents/document-preparation-error.js';
 import { RemoteReceiptDocumentPreparationError } from '../documents/remote-receipt-document-preparer.js';
+import { slicePreparedExportDocuments } from '../documents/export-document.js';
 import {
-  receiptModelProposalV1Schema,
+  parseReceiptModelProposals,
+  receiptModelProposalSetV1Schema,
   XaiResponsesAdapterError,
   type PreparedReceiptDocument,
   type ReceiptModelAdapter,
+  type ReceiptModelProposalV1,
 } from '../model/index.js';
 import {
   type PreserveBinaryOriginalInput,
@@ -165,7 +168,7 @@ function failedReply(event: AttachmentInboundEvent, code: string): TalkReply {
       : code.startsWith('nextcloud-')
         ? "I couldn't open that attachment. Please send it again."
         : code.startsWith('document-')
-          ? "I couldn't read that file. Please send a clear JPEG, PNG, or PDF."
+          ? "I couldn't read that file. Please send a JPEG, PNG, PDF, JSON, CSV, or spreadsheet."
           : "I couldn't finish reading that receipt right now. I didn't change the budget; please try again in a few minutes.";
   return {
     roomToken: event.roomToken,
@@ -341,15 +344,15 @@ export class AttachmentShadowWorkflow {
         source.sourceSha256,
         event.id,
       );
-      const reusableProposal =
+      const reusableProposals =
         reusable === undefined
           ? undefined
-          : receiptModelProposalV1Schema.safeParse(reusable.proposal);
-      if (reusable !== undefined && reusableProposal?.success === true) {
+          : parseReceiptModelProposals(reusable.proposal);
+      if (reusable !== undefined && reusableProposals !== undefined) {
         this.#throwIfShuttingDown();
         this.#store.completeReusedShadowAndEnqueueConversation(
           event.id,
-          reusableProposal.data,
+          reusable.proposal,
           reusable.modelMetadata,
           reusable.eventId,
           this.#now().toISOString(),
@@ -359,16 +362,22 @@ export class AttachmentShadowWorkflow {
       prepared = await this.#runBeforeTransmission(() =>
         this.#preparer.prepare(retrieved, this.#signal),
       );
+      const documents = slicePreparedExportDocuments(prepared);
 
       this.#throwIfShuttingDown();
       this.#store.startProviderCall(event.id, this.#now().toISOString());
-      let run;
+      const proposals: ReceiptModelProposalV1[] = [];
+      let metadata;
       try {
-        run = await this.#model.extract(
-          prepared,
-          this.#signal,
-          event.captionHint,
-        );
+        for (const document of documents) {
+          const run = await this.#model.extract(
+            document,
+            this.#signal,
+            event.captionHint,
+          );
+          proposals.push(run.proposal);
+          metadata = run.metadata;
+        }
       } catch (error) {
         if (
           error instanceof XaiResponsesAdapterError &&
@@ -383,11 +392,19 @@ export class AttachmentShadowWorkflow {
         }
         throw error;
       }
+      if (proposals[0] === undefined || metadata === undefined) {
+        throw new TerminalAttachmentShadowError('empty-export-extraction');
+      }
 
       this.#store.completeShadowAndEnqueueConversation(
         event.id,
-        run.proposal,
-        run.metadata,
+        proposals.length === 1
+          ? proposals[0]
+          : receiptModelProposalSetV1Schema.parse({
+              schemaVersion: 'receipt-model-proposal-set.v1',
+              proposals,
+            }),
+        metadata,
         this.#now().toISOString(),
       );
     } finally {

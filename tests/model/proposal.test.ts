@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canonicalizeHouseholdReceiptCurrency,
+  derivedExportProposalEventId,
   normalizeReceiptModelProposalV1,
+  parseReceiptModelProposals,
   receiptModelProposalV1JsonSchema,
   receiptModelProposalV1Schema,
   type ReceiptModelProposalV1,
@@ -62,6 +64,26 @@ function unknownProposal(): ReceiptModelProposalV1 {
 }
 
 describe('receipt model proposal schema', () => {
+  it('parses a single proposal or a bounded proposal set', () => {
+    const single = unknownProposal();
+    expect(parseReceiptModelProposals(single)).toEqual([single]);
+    expect(
+      parseReceiptModelProposals({
+        schemaVersion: 'receipt-model-proposal-set.v1',
+        proposals: [single, single],
+      }),
+    ).toHaveLength(2);
+    expect(
+      parseReceiptModelProposals({ schemaVersion: 'nope' }),
+    ).toBeUndefined();
+    const eventId = '8dfc1bd9-e07a-4c62-9d58-9529361536b9';
+    expect(derivedExportProposalEventId(eventId, 0)).toBe(eventId);
+    expect(derivedExportProposalEventId(eventId, 1)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(derivedExportProposalEventId(eventId, 1)).not.toBe(eventId);
+  });
+
   it('allows a fully unknown proposal without requiring invention', () => {
     expect(
       receiptModelProposalV1Schema.parse(unknownProposal()).documentDisposition,

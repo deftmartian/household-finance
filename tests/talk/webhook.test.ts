@@ -291,6 +291,37 @@ describe('Talk webhook intake', () => {
     }
   });
 
+  it.each([
+    ['application/json', 'application/json'],
+    ['application/json; charset=utf-8', 'application/json'],
+    ['text/json', 'application/json'],
+    ['text/csv', 'text/csv'],
+    ['application/csv', 'text/csv'],
+    ['text/tab-separated-values', 'text/tab-separated-values'],
+    ['text/plain', 'text/plain'],
+    [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ],
+    ['application/vnd.ms-excel', 'application/vnd.ms-excel'],
+  ] as const)('accepts a %s Talk export attachment', (mimetype, mediaType) => {
+    const rawBody = attachmentBody({ mimetype });
+    expect(parseTalkReceiptWebhook(rawBody, headers(rawBody), policy)).toEqual({
+      idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      backendUrl,
+      roomToken: 'private-finance-room',
+      actorId: 'alex',
+      messageId: '1568',
+      kind: 'nextcloud-file',
+      attachment: {
+        fileId: '12345',
+        etag: 'synthetic-etag',
+        sizeBytes: 8,
+        mediaType,
+      },
+    });
+  });
+
   it('rejects multiple file parameters and malformed file metadata', () => {
     const secondFile = {
       type: 'file',

@@ -158,6 +158,16 @@ describe('WebDavOriginalArchive', () => {
     { mediaType: 'image/jpeg' as const, extension: 'jpg' },
     { mediaType: 'image/png' as const, extension: 'png' },
     { mediaType: 'application/pdf' as const, extension: 'pdf' },
+    { mediaType: 'application/json' as const, extension: 'json' },
+    { mediaType: 'text/csv' as const, extension: 'csv' },
+    { mediaType: 'text/tab-separated-values' as const, extension: 'tsv' },
+    { mediaType: 'text/plain' as const, extension: 'txt' },
+    {
+      mediaType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' as const,
+      extension: 'xlsx',
+    },
+    { mediaType: 'application/vnd.ms-excel' as const, extension: 'xls' },
   ])(
     'preserves exact $mediaType bytes with a MIME-derived .$extension extension',
     async ({ mediaType, extension }) => {

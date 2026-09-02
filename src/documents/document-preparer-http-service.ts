@@ -13,6 +13,8 @@ import {
   sha256,
   sniffReceiptDocumentMediaType,
 } from './document-preparer-protocol.js';
+import { exportSniffMatchesDeclared } from './export-document.js';
+import { normalizeMediaType } from './receipt-media-types.js';
 import {
   ReceiptDocumentPreparationError,
   type ReceiptDocumentPreparationErrorCode,
@@ -117,7 +119,9 @@ function requestMetadata(request: IncomingMessage): {
     throw new ServiceRequestError(413, 'payload_too_large');
   }
 
-  const mediaType = exactHeader(request, 'content-type');
+  const mediaType = normalizeMediaType(
+    exactHeader(request, 'content-type') ?? '',
+  );
   if (!isReceiptDocumentMediaType(mediaType)) {
     throw new ServiceRequestError(415, 'unsupported_media_type');
   }
@@ -243,7 +247,11 @@ export function createDocumentPreparerHttpServer(
       if (sha256(body) !== metadata.sourceSha256) {
         throw new ServiceRequestError(422, 'source_hash_mismatch');
       }
-      if (sniffReceiptDocumentMediaType(body) !== metadata.mediaType) {
+      const sniffed = sniffReceiptDocumentMediaType(body);
+      if (
+        sniffed !== metadata.mediaType &&
+        !exportSniffMatchesDeclared(metadata.mediaType, sniffed)
+      ) {
         throw new ServiceRequestError(415, 'media_type_mismatch');
       }
 

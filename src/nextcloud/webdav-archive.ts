@@ -16,7 +16,15 @@ export interface PreserveOriginalInput {
 }
 
 export type BinaryOriginalMediaType =
-  'image/jpeg' | 'image/png' | 'application/pdf';
+  | 'image/jpeg'
+  | 'image/png'
+  | 'application/pdf'
+  | 'application/json'
+  | 'text/csv'
+  | 'text/tab-separated-values'
+  | 'text/plain'
+  | 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  | 'application/vnd.ms-excel';
 
 export interface PreserveBinaryOriginalInput {
   idempotencyKey: string;
@@ -77,8 +85,22 @@ function binaryExtension(mediaType: BinaryOriginalMediaType): string {
       return 'png';
     case 'application/pdf':
       return 'pdf';
-    default:
-      throw new Error('Cannot archive an unsupported binary media type');
+    case 'application/json':
+      return 'json';
+    case 'text/csv':
+      return 'csv';
+    case 'text/tab-separated-values':
+      return 'tsv';
+    case 'text/plain':
+      return 'txt';
+    case 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+      return 'xlsx';
+    case 'application/vnd.ms-excel':
+      return 'xls';
+    default: {
+      const unsupported: never = mediaType;
+      throw new Error(`unsupported binary media type: ${String(unsupported)}`);
+    }
   }
 }
 

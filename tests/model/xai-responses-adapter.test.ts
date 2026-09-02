@@ -27,6 +27,25 @@ function tinyDocument(): PreparedReceiptDocument {
   };
 }
 
+function tinyTextDocument(): PreparedReceiptDocument {
+  const bytes = Buffer.from(
+    '{"orderDate":"2026-07-01","totalAmount":12.34}\n',
+    'utf8',
+  );
+  return {
+    schemaVersion: 'prepared-receipt-document.v1',
+    sourceSha256: 'b'.repeat(64),
+    pages: [
+      {
+        position: 0,
+        mediaType: 'text/plain',
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        bytes,
+      },
+    ],
+  };
+}
+
 function nullField() {
   return {
     value: null,
@@ -300,6 +319,30 @@ describe('xAI Responses receipt adapter', () => {
     expect(JSON.stringify(documentBody.input)).toContain(
       'non-CAD currency only when the document explicitly',
     );
+    expect(JSON.stringify(documentBody.input)).toContain(
+      'Structured JSON, CSV, or spreadsheet pages',
+    );
+  });
+
+  it('sends prepared export pages as input_text rather than images', async () => {
+    const calls: RequestInit[] = [];
+    const fetchImplementation: typeof fetch = async (_url, init) => {
+      calls.push(init ?? {});
+      return calls.length === 1
+        ? validPreflightResponse()
+        : validDocumentResponse();
+    };
+
+    await adapterWith(fetchImplementation).extract(tinyTextDocument());
+
+    const documentBody = JSON.parse(String(calls[1]?.body)) as {
+      input: unknown[];
+    };
+    const serialized = JSON.stringify(documentBody.input);
+    expect(serialized).toContain('"type":"input_text"');
+    expect(serialized).toContain('orderDate');
+    expect(serialized).not.toContain('input_image');
+    expect(serialized).not.toContain('data:image');
   });
 
   it('sends an authenticated caption only as untrusted extraction data', async () => {

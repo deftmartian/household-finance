@@ -7,6 +7,7 @@ import {
   sha256,
   sniffReceiptDocumentMediaType,
 } from './document-preparer-protocol.js';
+import { exportSniffMatchesDeclared } from './export-document.js';
 import {
   ReceiptDocumentPreparationError,
   type ReceiptDocumentPreparationErrorCode,
@@ -26,6 +27,8 @@ const preparationErrorCodes: ReadonlySet<string> = new Set([
   'pdf-encrypted',
   'pdf-limits-exceeded',
   'pdf-rasterization-failed',
+  'export-invalid',
+  'export-limits-exceeded',
   'prepared-document-invalid',
 ] satisfies readonly ReceiptDocumentPreparationErrorCode[]);
 
@@ -212,11 +215,13 @@ function receiptPreparationError(
 function sourceLimitError(
   mediaType: ReceiptDocumentSource['mediaType'],
 ): ReceiptDocumentPreparationError {
-  return new ReceiptDocumentPreparationError(
-    mediaType === 'application/pdf'
-      ? 'pdf-limits-exceeded'
-      : 'image-limits-exceeded',
-  );
+  if (mediaType === 'application/pdf') {
+    return new ReceiptDocumentPreparationError('pdf-limits-exceeded');
+  }
+  if (mediaType === 'image/jpeg' || mediaType === 'image/png') {
+    return new ReceiptDocumentPreparationError('image-limits-exceeded');
+  }
+  return new ReceiptDocumentPreparationError('export-limits-exceeded');
 }
 
 function validateSource(source: ReceiptDocumentSource, bytes: Buffer): void {
@@ -235,9 +240,17 @@ function validateSource(source: ReceiptDocumentSource, bytes: Buffer): void {
   ) {
     throw new ReceiptDocumentPreparationError('prepared-document-invalid');
   }
-  if (sniffReceiptDocumentMediaType(bytes) !== source.mediaType) {
+  const sniffed = sniffReceiptDocumentMediaType(bytes);
+  if (
+    sniffed !== source.mediaType &&
+    !exportSniffMatchesDeclared(source.mediaType, sniffed)
+  ) {
     throw new ReceiptDocumentPreparationError(
-      source.mediaType === 'application/pdf' ? 'pdf-invalid' : 'image-invalid',
+      source.mediaType === 'application/pdf'
+        ? 'pdf-invalid'
+        : source.mediaType === 'image/jpeg' || source.mediaType === 'image/png'
+          ? 'image-invalid'
+          : 'export-invalid',
     );
   }
 }
@@ -357,9 +370,7 @@ export class RemoteReceiptDocumentPreparer {
         }
         throw new ReceiptDocumentPreparationError(
           response.status === 413
-            ? source.mediaType === 'application/pdf'
-              ? 'pdf-limits-exceeded'
-              : 'image-limits-exceeded'
+            ? sourceLimitError(source.mediaType).code
             : 'prepared-document-invalid',
         );
       }

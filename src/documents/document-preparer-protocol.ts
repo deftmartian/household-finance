@@ -9,6 +9,7 @@ import {
   PreparedReceiptDocumentError,
   type PreparedReceiptDocument,
 } from '../model/index.js';
+import { sniffReceiptExportMediaType } from './export-document.js';
 import type { ReceiptDocumentSource } from './receipt-document-preparer.js';
 
 export const MAX_DOCUMENT_PREPARER_SOURCE_BYTES = 12 * 1024 * 1024;
@@ -28,7 +29,7 @@ const transportedReceiptPageSchema = z.strictObject({
     .int()
     .min(0)
     .max(MAX_PREPARED_RECEIPT_PAGES - 1),
-  mediaType: z.enum(['image/jpeg', 'image/png']),
+  mediaType: z.enum(['image/jpeg', 'image/png', 'text/plain']),
   sha256: sha256Schema,
   bytesBase64: z
     .string()
@@ -46,23 +47,13 @@ const transportedReceiptDocumentSchema = z.strictObject({
     .max(MAX_PREPARED_RECEIPT_PAGES),
 });
 
-export const receiptDocumentMediaTypes = [
-  'image/jpeg',
-  'image/png',
-  'application/pdf',
-] as const;
+export {
+  isReceiptDocumentMediaType,
+  receiptDocumentMediaTypes,
+} from './receipt-media-types.js';
 
 export function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
-}
-
-export function isReceiptDocumentMediaType(
-  value: unknown,
-): value is ReceiptDocumentSource['mediaType'] {
-  return (
-    typeof value === 'string' &&
-    receiptDocumentMediaTypes.some((mediaType) => mediaType === value)
-  );
 }
 
 export function sniffReceiptDocumentMediaType(
@@ -99,7 +90,7 @@ export function sniffReceiptDocumentMediaType(
   ) {
     return 'application/pdf';
   }
-  return undefined;
+  return sniffReceiptExportMediaType(bytes);
 }
 
 export function serializePreparedReceiptDocument(input: unknown): Buffer {
@@ -151,7 +142,7 @@ export function parseTransportedReceiptDocument(
 
   const pages: Array<{
     position: number;
-    mediaType: 'image/jpeg' | 'image/png';
+    mediaType: 'image/jpeg' | 'image/png' | 'text/plain';
     sha256: string;
     bytes: Buffer;
   }> = [];

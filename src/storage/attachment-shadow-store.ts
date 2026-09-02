@@ -151,7 +151,17 @@ const attachmentSchema = `
     source_etag TEXT NOT NULL,
     source_size_bytes INTEGER NOT NULL,
     source_media_type TEXT NOT NULL CHECK (
-      source_media_type IN ('image/jpeg', 'image/png', 'application/pdf')
+      source_media_type IN (
+        'image/jpeg',
+        'image/png',
+        'application/pdf',
+        'application/json',
+        'text/csv',
+        'text/tab-separated-values',
+        'text/plain',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel'
+      )
     ),
     caption_hint TEXT CHECK (
       caption_hint IS NULL
@@ -337,6 +347,56 @@ function toShadowItem(row: AttachmentShadowRow): AttachmentShadowItem {
  * This store is deliberately isolated. The attachment model lane therefore
  * has no method capable of creating or linking an Actual transaction.
  */
+function migrateInboundMediaTypes(database: Database.Database): void {
+  const row = database
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'attachment_inbound_events'`,
+    )
+    .get() as { sql: string } | undefined;
+  if (row === undefined || row.sql.includes('application/json')) {
+    return;
+  }
+  database.exec(`
+    PRAGMA foreign_keys = OFF;
+    CREATE TABLE attachment_inbound_events_v2 (
+      id TEXT PRIMARY KEY,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      backend_url TEXT NOT NULL,
+      room_token TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      file_id TEXT NOT NULL,
+      source_etag TEXT NOT NULL,
+      source_size_bytes INTEGER NOT NULL,
+      source_media_type TEXT NOT NULL CHECK (
+        source_media_type IN (
+          'image/jpeg',
+          'image/png',
+          'application/pdf',
+          'application/json',
+          'text/csv',
+          'text/tab-separated-values',
+          'text/plain',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel'
+        )
+      ),
+      caption_hint TEXT CHECK (
+        caption_hint IS NULL
+        OR (
+          length(caption_hint) BETWEEN 1 AND 2000
+          AND instr(caption_hint, char(0)) = 0
+        )
+      ),
+      received_at TEXT NOT NULL
+    ) STRICT;
+    INSERT INTO attachment_inbound_events_v2 SELECT * FROM attachment_inbound_events;
+    DROP TABLE attachment_inbound_events;
+    ALTER TABLE attachment_inbound_events_v2 RENAME TO attachment_inbound_events;
+    PRAGMA foreign_keys = ON;
+  `);
+}
+
 export class AttachmentShadowStore {
   readonly #database: Database.Database;
   readonly #changeToken: SqliteChangeTokenReader;
@@ -347,6 +407,7 @@ export class AttachmentShadowStore {
     }
     this.#database = new Database(databasePath);
     this.#database.exec(attachmentSchema);
+    migrateInboundMediaTypes(this.#database);
     this.#changeToken = new SqliteChangeTokenReader(this.#database);
   }
 

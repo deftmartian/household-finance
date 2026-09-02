@@ -22,6 +22,42 @@ function jpegBytes(extraBytes = 0): Uint8Array {
 }
 
 describe('prepared receipt documents', () => {
+  it('accepts UTF-8 text pages without a NUL', () => {
+    const text = Buffer.from('Date,Total\n2026-07-01,12.34\n', 'utf8');
+    expect(
+      parsePreparedReceiptDocument({
+        schemaVersion: 'prepared-receipt-document.v1',
+        sourceSha256: 'a'.repeat(64),
+        pages: [
+          {
+            position: 0,
+            mediaType: 'text/plain',
+            sha256: hash(text),
+            bytes: text,
+          },
+        ],
+      }).pages[0]?.mediaType,
+    ).toBe('text/plain');
+  });
+
+  it('rejects text pages that are not valid UTF-8', () => {
+    const invalid = Uint8Array.from([0xff, 0xfe, 0x00]);
+    expect(
+      preparedReceiptDocumentSchema.safeParse({
+        schemaVersion: 'prepared-receipt-document.v1',
+        sourceSha256: 'a'.repeat(64),
+        pages: [
+          {
+            position: 0,
+            mediaType: 'text/plain',
+            sha256: hash(invalid),
+            bytes: invalid,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it('accepts exact ordered JPEG and PNG bytes with matching hashes', () => {
     const jpeg = jpegBytes(2);
     const png = Uint8Array.from([

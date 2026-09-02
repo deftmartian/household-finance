@@ -2,6 +2,11 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import { z } from 'zod';
 
+import {
+  normalizeMediaType,
+  receiptDocumentMediaTypes,
+} from '../documents/receipt-media-types.js';
+
 const talkMessageContentSchema = z.object({
   message: z.string(),
   parameters: z
@@ -94,11 +99,7 @@ export type TalkWebhookEvent =
 
 export const MAX_TALK_RECEIPT_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 
-export const talkAttachmentMediaTypes = [
-  'image/jpeg',
-  'image/png',
-  'application/pdf',
-] as const;
+export const talkAttachmentMediaTypes = receiptDocumentMediaTypes;
 
 export type TalkAttachmentMediaType = (typeof talkAttachmentMediaTypes)[number];
 
@@ -212,7 +213,7 @@ function parseTalkAttachment(
     throw new TalkWebhookRejectedError('invalid-payload');
   }
 
-  const mediaType = parsed.data.mimetype.toLowerCase();
+  const mediaType = normalizeMediaType(parsed.data.mimetype);
   if (
     parsed.data['hide-download'] === 'yes' ||
     !supportedAttachmentMediaTypes.has(mediaType) ||

@@ -5,6 +5,8 @@ export type ReceiptDocumentPreparationErrorCode =
   | 'pdf-encrypted'
   | 'pdf-limits-exceeded'
   | 'pdf-rasterization-failed'
+  | 'export-invalid'
+  | 'export-limits-exceeded'
   | 'prepared-document-invalid';
 
 export class ReceiptDocumentPreparationError extends Error {

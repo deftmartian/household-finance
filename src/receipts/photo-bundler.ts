@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import type { ReceiptDocumentMediaType } from '../documents/receipt-media-types.js';
 import {
   assessReceiptModelProposal,
   receiptModelProposalV1Schema,
@@ -25,7 +26,7 @@ export interface ReceiptPhotoCandidate {
   readonly receivedAt: string;
   readonly fileId: string;
   readonly archivePath: string;
-  readonly mediaType: 'image/jpeg' | 'image/png' | 'application/pdf';
+  readonly mediaType: ReceiptDocumentMediaType;
   readonly sourceSha256: string;
   readonly extractedAt: string;
   readonly modelMetadata: ReceiptModelRunMetadata;

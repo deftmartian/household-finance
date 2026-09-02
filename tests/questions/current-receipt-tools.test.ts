@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ReceiptModelProposalV1 } from '../../src/model/index.js';
+import type {
+  ReceiptModelProposalSetV1,
+  ReceiptModelProposalV1,
+} from '../../src/model/index.js';
 import { currentReceiptReadTool } from '../../src/questions/current-receipt-tools.js';
 import type { FinanceQuestionAgentInput } from '../../src/questions/xai-finance-agent.js';
 import { AttachmentShadowStore } from '../../src/storage/attachment-shadow-store.js';
@@ -86,7 +89,10 @@ function complete(
   idempotencyKey: string,
   merchant: string,
   fileId: string,
-  proposal: ReceiptModelProposalV1 = receiptProposal(merchant),
+  proposal:
+    ReceiptModelProposalV1 | ReceiptModelProposalSetV1 = receiptProposal(
+    merchant,
+  ),
   messageId = '700',
 ) {
   const recorded = store.recordInbound({
@@ -183,6 +189,41 @@ describe('current receipt read tool', () => {
     expect(result).not.toHaveProperty('workflow.matching.ready');
     expect(result).not.toHaveProperty('workflow.matching.matched');
     expect(result).not.toHaveProperty('workflow.matching.applied');
+    store.close();
+  });
+
+  it('exposes each order from a structured export', async () => {
+    const store = new AttachmentShadowStore(':memory:');
+    const second = receiptProposal('Amazon');
+    second.purchaseDate = field('2026-07-02');
+    second.amounts.total = amount(500);
+    complete(store, 'attachment:current', 'Amazon', '2', {
+      schemaVersion: 'receipt-model-proposal-set.v1',
+      proposals: [receiptProposal('Amazon'), second],
+    });
+    const tool = currentReceiptReadTool({
+      attachments: store,
+      input: input('attachment:current'),
+    });
+
+    const result = await tool.execute({});
+    expect(result).toMatchObject({
+      receiptAvailable: true,
+      receiptCount: 2,
+      receipts: [
+        {
+          merchant: 'Amazon',
+          purchaseDate: '2026-08-01',
+          total: { valueMinor: 3_218 },
+        },
+        {
+          merchant: 'Amazon',
+          purchaseDate: '2026-07-02',
+          total: { valueMinor: 500 },
+        },
+      ],
+    });
+    expect(result).not.toHaveProperty('receipt');
     store.close();
   });
 

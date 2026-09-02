@@ -8,6 +8,7 @@ import {
   type PdfRasterizer,
 } from '../../src/documents/index.js';
 import {
+  parsePreparedReceiptDocument,
   XaiResponsesAdapterError,
   type ReceiptModelAdapter,
   type ReceiptModelProposalV1,
@@ -320,6 +321,77 @@ describe('AttachmentShadowWorkflow', () => {
       proposal: {
         schemaVersion: 'receipt-model-proposal.v1',
       },
+    });
+    store.close();
+  });
+
+  it('extracts each structured-export order as its own proposal', async () => {
+    const second = proposal();
+    second.purchaseDate = {
+      value: '2026-07-02',
+      evidence: 'explicit',
+      confidence: 0.9,
+      sourcePage: 1,
+    };
+    second.amounts.total = {
+      valueMinor: 500,
+      evidence: 'explicit',
+      confidence: 0.9,
+      sourcePage: 1,
+    };
+    const model: ReceiptModelAdapter = {
+      extract: vi.fn(async (document) => ({
+        proposal: new TextDecoder()
+          .decode(document.pages[0]!.bytes)
+          .includes('2026-07-02')
+          ? second
+          : proposal(),
+        metadata: {
+          provider: 'xai',
+          requestedModel: 'grok-4.5',
+          resolvedModel: 'grok-4.5',
+          preflightAttempts: 1,
+          documentAttempts: 1,
+          durationMs: 100,
+          zeroDataRetention: true as const,
+          usage: { costInUsdTicks: 1_000 },
+        },
+      })),
+    };
+    const text = `${JSON.stringify(
+      [
+        { orderDate: '2026-07-01', totalAmount: 17.25 },
+        { orderDate: '2026-07-02', totalAmount: 5 },
+      ],
+      null,
+      2,
+    )}\n`;
+    const bytes = Buffer.from(text, 'utf8');
+    const preparer: AttachmentDocumentPreparer = {
+      prepare: async () =>
+        parsePreparedReceiptDocument({
+          schemaVersion: 'prepared-receipt-document.v1',
+          sourceSha256: 'c'.repeat(64),
+          pages: [
+            {
+              position: 0,
+              mediaType: 'text/plain',
+              sha256: createHash('sha256').update(bytes).digest('hex'),
+              bytes: Buffer.from(bytes),
+            },
+          ],
+        }),
+    };
+    const { store, workflow, event } = await setup(model, undefined, preparer);
+
+    expect(await workflow.processAvailable()).toBe(1);
+    expect(model.extract).toHaveBeenCalledTimes(2);
+    expect(store.getShadowItem(event.id)?.proposal).toMatchObject({
+      schemaVersion: 'receipt-model-proposal-set.v1',
+      proposals: [
+        { schemaVersion: 'receipt-model-proposal.v1' },
+        { schemaVersion: 'receipt-model-proposal.v1' },
+      ],
     });
     store.close();
   });

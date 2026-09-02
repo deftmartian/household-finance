@@ -25,6 +25,11 @@ import {
   parsePreparedReceiptDocument,
   type PreparedReceiptDocument,
 } from '../model/index.js';
+import { convertExportToUtf8Text } from './export-document.js';
+import {
+  isReceiptExportMediaType,
+  type ReceiptDocumentMediaType,
+} from './receipt-media-types.js';
 
 type SharpMetadata = Awaited<ReturnType<ReturnType<typeof sharp>['metadata']>>;
 
@@ -50,7 +55,7 @@ export interface SelectedPdfPageRasterizer {
 
 export interface ReceiptDocumentSource {
   bytes: Uint8Array;
-  mediaType: 'application/pdf' | 'image/jpeg' | 'image/png';
+  mediaType: ReceiptDocumentMediaType;
   sourceSha256: string;
 }
 
@@ -397,6 +402,35 @@ function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+function prepareExportDocument(
+  source: ReceiptDocumentSource,
+): PreparedReceiptDocument {
+  if (!isReceiptExportMediaType(source.mediaType)) {
+    throw new ReceiptDocumentPreparationError('export-invalid');
+  }
+  try {
+    const text = convertExportToUtf8Text(source.bytes, source.mediaType);
+    const bytes = Buffer.from(text, 'utf8');
+    return parsePreparedReceiptDocument({
+      schemaVersion: 'prepared-receipt-document.v1',
+      sourceSha256: source.sourceSha256,
+      pages: [
+        {
+          position: 0,
+          mediaType: 'text/plain',
+          sha256: sha256(bytes),
+          bytes,
+        },
+      ],
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'export-limits-exceeded') {
+      throw new ReceiptDocumentPreparationError('export-limits-exceeded');
+    }
+    throw new ReceiptDocumentPreparationError('export-invalid');
+  }
+}
+
 async function prepareNormalizedPages(
   sourceSha256: string,
   rawPages: readonly Uint8Array[],
@@ -454,6 +488,9 @@ export class ReceiptDocumentPreparer {
   async prepare(
     source: ReceiptDocumentSource,
   ): Promise<PreparedReceiptDocument> {
+    if (isReceiptExportMediaType(source.mediaType)) {
+      return prepareExportDocument(source);
+    }
     const rawPages: readonly Uint8Array[] =
       source.mediaType === 'application/pdf'
         ? await this.#pdfRasterizer.rasterize(source.bytes)
@@ -497,6 +534,12 @@ export class SelectedReceiptDocumentPreparer {
     }
 
     let rawPages: readonly Uint8Array[];
+    if (isReceiptExportMediaType(source.mediaType)) {
+      if (oneBasedPages.length !== 1 || oneBasedPages[0] !== 1) {
+        throw new ReceiptDocumentPreparationError('export-limits-exceeded');
+      }
+      return prepareExportDocument(source);
+    }
     if (source.mediaType === 'application/pdf') {
       rawPages = await this.#pdfRasterizer.rasterizeSelected(
         source.bytes,

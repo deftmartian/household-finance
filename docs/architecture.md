@@ -8,7 +8,7 @@ giving the model direct authority over the ledger.
 ```text
 Nextcloud Talk
   ├─ message or voice note ───────────────┐
-  └─ receipt image or PDF                 │
+  └─ receipt image, PDF, or data export   │
            │                              │
            v                              │
   document-preparer                      │
@@ -88,8 +88,9 @@ a retry attempt.
 
 - `finance-bot` handles Talk workflows and model reasoning but has no Actual
   password.
-- `document-preparer` parses images and PDFs without secrets, persistent
-  storage, or external network access.
+- `document-preparer` parses images, PDFs, and data exports (JSON, CSV,
+  TSV, and spreadsheets) without secrets, persistent storage, or external
+  network access. Structured exports become text pages for the model.
 - `actual-reader` exposes only bounded, model-safe read operations.
 - `actual-writer` is isolated on an internal network with a dedicated
   credential and production contract.

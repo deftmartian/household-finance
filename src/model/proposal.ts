@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { z } from 'zod';
 
 import { MAX_PREPARED_RECEIPT_PAGES } from './document.js';
@@ -336,6 +338,64 @@ export const receiptModelProposalV1Schema =
 export type ReceiptModelProposalV1 = z.infer<
   typeof receiptModelProposalV1Schema
 >;
+
+export const receiptModelProposalSetV1Schema = z.strictObject({
+  schemaVersion: z.literal('receipt-model-proposal-set.v1'),
+  proposals: z.array(receiptModelProposalV1Schema).min(1).max(40),
+});
+
+export type ReceiptModelProposalSetV1 = z.infer<
+  typeof receiptModelProposalSetV1Schema
+>;
+
+export function parseReceiptModelProposals(
+  input: unknown,
+): ReceiptModelProposalV1[] | undefined {
+  const single = receiptModelProposalV1Schema.safeParse(input);
+  if (single.success) {
+    return [single.data];
+  }
+  const set = receiptModelProposalSetV1Schema.safeParse(input);
+  if (set.success) {
+    return set.data.proposals;
+  }
+  return undefined;
+}
+
+export function derivedExportProposalEventId(
+  eventId: string,
+  index: number,
+): string {
+  if (index === 0) {
+    return eventId;
+  }
+  const bytes = createHash('sha256')
+    .update('household-finance:export-proposal-event\0')
+    .update(eventId)
+    .update('\0')
+    .update(String(index))
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x80;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Buffer.from(bytes).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function derivedExportProposalSourceSha256(
+  sourceSha256: string,
+  index: number,
+): string {
+  if (index === 0) {
+    return sourceSha256;
+  }
+  return createHash('sha256')
+    .update('household-finance:export-proposal-source\0')
+    .update(sourceSha256)
+    .update('\0')
+    .update(String(index))
+    .digest('hex');
+}
 
 /**
  * Converts structurally valid but internally inconsistent payment evidence

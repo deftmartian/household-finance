@@ -50,6 +50,19 @@ const mediaFixtures: readonly MediaFixture[] = [
     mediaType: 'application/pdf',
     bytes: Buffer.from('%PDF-1.7\nsynthetic\n%%EOF\n', 'ascii'),
   },
+  {
+    extension: 'json',
+    mediaType: 'application/json',
+    bytes: Buffer.from('{"orderDate":"2026-07-01","totalAmount":1}\n', 'utf8'),
+  },
+  {
+    extension: 'csv',
+    mediaType: 'text/csv',
+    bytes: Buffer.from(
+      'Date,Total\n2026-07-01,1.00\n2026-07-02,2.00\n',
+      'utf8',
+    ),
+  },
 ];
 
 const jpegFixture = mediaFixtures[0] as MediaFixture;

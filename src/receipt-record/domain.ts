@@ -54,7 +54,17 @@ export const householdFinanceReceiptSourceSchema = z.strictObject({
   nextcloudFileId: boundedText(500),
   archivePath,
   sha256: hash,
-  mediaType: z.enum(['image/jpeg', 'image/png', 'application/pdf']),
+  mediaType: z.enum([
+    'image/jpeg',
+    'image/png',
+    'application/pdf',
+    'application/json',
+    'text/csv',
+    'text/tab-separated-values',
+    'text/plain',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+  ]),
   receivedAt: instant,
   talk: z.strictObject({
     roomToken: boundedText(500),

@@ -32,7 +32,7 @@ context. Voice notes go through the same workflow as typed messages.
 
 ## What it does
 
-- Reads JPEG, PNG, and PDF receipts sent through chat.
+- Reads JPEG, PNG, PDF, JSON, CSV, and spreadsheet receipts sent through chat.
 - Combines multi-photo receipts and detects duplicate uploads.
 - Matches receipts to imported bank transactions, including purchases split
   across more than one charge.

@@ -14,7 +14,7 @@ const receiptPageSchema = z.strictObject({
     .int()
     .min(0)
     .max(MAX_PREPARED_RECEIPT_PAGES - 1),
-  mediaType: z.enum(['image/jpeg', 'image/png']),
+  mediaType: z.enum(['image/jpeg', 'image/png', 'text/plain']),
   sha256: sha256Schema,
   bytes: z
     .instanceof(Uint8Array)
@@ -29,11 +29,19 @@ const receiptPageSchema = z.strictObject({
 });
 
 function hasExpectedSignature(
-  mediaType: 'image/jpeg' | 'image/png',
+  mediaType: 'image/jpeg' | 'image/png' | 'text/plain',
   bytes: Uint8Array,
 ): boolean {
   if (mediaType === 'image/jpeg') {
     return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  if (mediaType === 'text/plain') {
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      return text.length > 0 && !text.includes('\u0000');
+    } catch {
+      return false;
+    }
   }
 
   const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

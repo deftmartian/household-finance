@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
 import { AttachmentShadowStore } from '../../src/storage/index.js';
@@ -595,5 +600,99 @@ describe('AttachmentShadowStore', () => {
       'attachment.provider-outcome-unknown',
     );
     store.close();
+  });
+
+  it('records JSON and spreadsheet attachment media types', () => {
+    const store = new AttachmentShadowStore(':memory:');
+    const recorded = store.recordInbound({
+      ...input('attachment:json'),
+      attachment: {
+        ...input().attachment,
+        mediaType: 'application/json',
+      },
+    });
+    expect(store.getInbound(recorded.event.id)?.attachment.mediaType).toBe(
+      'application/json',
+    );
+    store.close();
+  });
+
+  it('rebuilds a live inbound CHECK so export media types can be stored', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'hf-attachment-'));
+    const databasePath = join(directory, 'attachments.sqlite');
+    const legacy = new Database(databasePath);
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE attachment_inbound_events (
+        id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        backend_url TEXT NOT NULL,
+        room_token TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        source_etag TEXT NOT NULL,
+        source_size_bytes INTEGER NOT NULL,
+        source_media_type TEXT NOT NULL CHECK (
+          source_media_type IN (
+            'image/jpeg',
+            'image/png',
+            'application/pdf'
+          )
+        ),
+        caption_hint TEXT,
+        received_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE attachment_shadow_items (
+        event_id TEXT PRIMARY KEY REFERENCES attachment_inbound_events(id),
+        status TEXT NOT NULL,
+        archive_path TEXT,
+        source_sha256 TEXT,
+        proposal_json TEXT,
+        model_metadata_json TEXT,
+        error_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE attachment_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        event_id TEXT NOT NULL REFERENCES attachment_inbound_events(id),
+        payload_json TEXT NOT NULL,
+        state TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        available_at TEXT NOT NULL,
+        locked_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      ) STRICT;
+      CREATE TABLE attachment_audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL REFERENCES attachment_inbound_events(id),
+        action TEXT NOT NULL,
+        detail_json TEXT NOT NULL,
+        occurred_at TEXT NOT NULL
+      ) STRICT;
+    `);
+    legacy.close();
+
+    const store = new AttachmentShadowStore(databasePath);
+    try {
+      const recorded = store.recordInbound({
+        ...input('attachment:migrated-json'),
+        attachment: {
+          ...input().attachment,
+          mediaType: 'text/csv',
+        },
+      });
+      expect(store.getInbound(recorded.event.id)?.attachment.mediaType).toBe(
+        'text/csv',
+      );
+    } finally {
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
