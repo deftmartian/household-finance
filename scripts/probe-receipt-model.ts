@@ -1,7 +1,6 @@
 // Synthetic image acceptance only; no household data is read.
 import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
-import { z } from 'zod';
 import { Model } from '../src/model.js';
 import { Store } from '../src/store.js';
 import { factsSchema } from '../src/domain.js';
