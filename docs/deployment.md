@@ -45,3 +45,11 @@ unprivileged, drops every capability, and retains no-new-privileges and a
 read-only root. The parser receives no application data, secrets, process tree,
 or network. Run `scripts/verify-container.sh IMAGE` on the deployment engine;
 Docker's default policy blocks the required nested namespace creation.
+
+On AppArmor hosts, load `config/document-apparmor` with `apparmor_parser -r`
+and select `apparmor=household-finance-documents` in the application's security
+options. The profile retains Moby's proc/sys, kernel-network, signal, and ptrace
+restrictions while permitting sandbox namespace/mount setup. The verification
+script accepts `FINANCE_APPARMOR_PROFILE=household-finance-documents`. The CI
+runner exercises this profile; hosts without AppArmor need only the seccomp
+profile. Neither profile grants the outer container any capabilities.

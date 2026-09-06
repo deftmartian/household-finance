@@ -4,7 +4,12 @@ export async function readBytes(
   response: Response,
   limit: number,
 ): Promise<Buffer> {
-  const declared = response.headers.get('content-length');
+  // Fetch decodes compressed responses but retains wire-size headers.
+  const encoding = response.headers.get('content-encoding');
+  const declared =
+    !encoding || encoding === 'identity'
+      ? response.headers.get('content-length')
+      : null;
   if (
     declared !== null &&
     (!/^\d+$/.test(declared) || Number(declared) > limit)

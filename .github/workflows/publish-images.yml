@@ -24,7 +24,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
       - run: docker build --target finance-runtime -t finance-test .
+      - run: sudo apparmor_parser -r config/document-apparmor
       - run: bash scripts/verify-container.sh finance-test
+        env:
+          FINANCE_APPARMOR_PROFILE: household-finance-documents
   publish:
     needs: verify
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
