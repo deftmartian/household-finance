@@ -3,7 +3,12 @@ import type { z } from 'zod';
 import { Store } from '../src/store.js';
 import { Engine } from '../src/engine.js';
 import type { Interpreter } from '../src/model.js';
-import { itemAllocations, key, withPurchaseNote } from '../src/domain.js';
+import {
+  factsSchema,
+  itemAllocations,
+  key,
+  withPurchaseNote,
+} from '../src/domain.js';
 import { FakeLedger, purchase, transaction } from './fixtures.js';
 import type { Message } from '../src/talk.js';
 const stores: Store[] = [];
@@ -216,5 +221,38 @@ it('rejects a retry justified only by text absent from the current message', asy
   expect(
     f.store.db.prepare('SELECT state FROM jobs WHERE id=?').get('old-work'),
   ).toEqual({ state: 'attention' });
+  expect(f.ledger.writes).toBe(0);
+});
+
+it('preserves differing evidence for the same order without replacing prior facts', async () => {
+  const f = setup();
+  const old = purchase();
+  old.reference = 'ORDER-123';
+  old.id = key('reference', old.merchant!, old.reference, old.currency!);
+  f.ledger.seed(old);
+  await f.engine.refresh();
+  const facts = factsSchema.strip().parse(old);
+  facts.items[0]!.description = 'Different printed item';
+  f.engine.options.prepare = async () => ({
+    type: 'facts',
+    facts: [facts],
+    mediaType: 'text/csv',
+  });
+  f.talk.archive.mockResolvedValue({
+    ...old.sources[0]!,
+    hash: 'b'.repeat(64),
+    messageId: '2',
+  });
+  const incoming = message('Updated receipt');
+  incoming.attachments = [
+    { fileId: '123', etag: 'abc', size: 4, mediaType: 'text/csv' },
+  ];
+  f.store.intake(incoming, 'attachment', incoming);
+  await f.engine.run(f.store.next()!);
+  const saved = (await f.ledger.purchases())[0]!;
+  expect(saved.items).toEqual(old.items);
+  expect(saved.sources).toHaveLength(2);
+  expect(saved.state).toBe('attention');
+  expect(saved.evidence?.alternateRecords).toHaveLength(1);
   expect(f.ledger.writes).toBe(0);
 });
