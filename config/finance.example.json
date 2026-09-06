@@ -1,0 +1,33 @@
+{
+  "port": 4380,
+  "dataDir": "/data",
+  "currency": "CAD",
+  "timezone": "America/Halifax",
+  "actual": {
+    "url": "http://actual-server:5006",
+    "budget": "existing-budget-sync-id",
+    "passwordFile": "/run/secrets/actual_server_password",
+    "readAccounts": ["existing-account-id"],
+    "writeAccounts": ["existing-account-id"],
+    "automaticCategories": ["existing-expense-category-id"]
+  },
+  "talk": {
+    "url": "https://cloud.example.com",
+    "room": "existing-room-token",
+    "botActor": "bots/bot-0000000000000000000000000000000000000000",
+    "secretFile": "/run/secrets/talk_bot_secret",
+    "users": ["household-user"],
+    "user": "finance-service",
+    "passwordFile": "/run/secrets/nextcloud_app_password",
+    "archive": "Finance/Receipts"
+  },
+  "model": {
+    "keyFile": "/run/secrets/xai_api_key",
+    "model": "grok-4.6",
+    "effort": "low",
+    "dailyTicks": 30000000000,
+    "reservationTicks": 5000000000,
+    "enabled": false
+  },
+  "activate": false
+}

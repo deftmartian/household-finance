@@ -1,272 +1,47 @@
-# Deployment
+# Deployment and recovery
 
-This guide covers the generic Compose deployment included with Household
-Finance. Keep site-specific identities, network details, contracts, and secret
-paths in an untracked environment file or a separate private deployment
-repository.
+The application replaces the previous runtime wholesale. Keep Actual Server, its volume, budget identity, bank connections, categories, rules, schedules, and user-written notes. Do not recreate a budget to activate the assistant.
 
-## Requirements
+## Before activation
 
-- Node.js 24
-- Corepack and pnpm 10.32
-- Docker Compose or a compatible container engine
-- Poppler for local PDF processing
-- Nextcloud with Talk and Files
-- Actual Budget
-- xAI API access
+1. Stage a verified image by complete commit/digest. The publish workflow builds one image and does not advance a moving production tag.
+2. Keep the production deployment checkout unchanged while preparing the replacement. Directory-sync GitOps can activate changes immediately.
+3. Capture Actual's exported budget and complete API snapshot; back up all application databases, household context, original-file references, deployment, and credentials privately. Restore the budget in a network-isolated rehearsal.
+4. Build the conversion manifest with the offline tools in `scripts/`. Run it twice against the restored budget, then reconnect and verify preservation. Every source field remains in canonical evidence. A stale receipt revision is retained with its original reference and marked for review; its bank categorization is unchanged.
+5. Import household context and unresolved business work into a fresh application database. Completed message identities prevent replay. Old voice requests are explicitly retired. Set the Talk history cursor at the maintenance boundary. Runtime startup refuses a missing cursor.
+6. Verify document isolation, typed model responses with ZDR, memory save/recall/correction/forget, ledger writes/readback, Talk history, original-file permissions, and readable purchase notes.
 
-## Verify the checkout
+## Hard cut
 
-```sh
-corepack enable
-pnpm install --frozen-lockfile
-pnpm verify
-pnpm audit --prod
-```
+Capture the current Talk cursor with the cutover tool’s `cursor` mode before stopping old intake and all old workers. Keep that cursor unchanged through snapshot, conversion, and startup so maintenance messages remain eligible for replay. Pause bank imports and household edits for the consistent snapshot and conversion. Take final backups and run the exact reviewed conversion. Only notes and positively identified old application tokens may change. The converter checks every unrelated field and note, journals each mutation, and stops on unexpected state.
 
-`pnpm verify` runs formatting, lint, type checks, tests, the production build,
-and the rendered Compose security contract.
+Use a fresh `finance-data` volume populated with the converted work/context database, and mount the private configuration and existing credential files read-only. The application runs as UID 1000 with `/data` writable and a read-only root filesystem. The entrypoint holds an exclusive kernel lock for the entire process lifetime. A second application instance must fail to acquire that lock.
 
-For local development, the service starts with its write-capable production
-workflow disabled:
+Start only the replacement application with Actual Server unchanged. Keep the existing bot identity and `/talk/webhook` endpoint. Replay messages after the maintenance cursor through authenticated history, deduplicating already-accepted webhooks. Confirm receipts, a purchase-purpose correction, readable transaction notes, both household users' original-file access, and restart recovery.
 
-```sh
-pnpm dev
-curl --fail http://127.0.0.1:4380/health/ready
-```
+Remove old service definitions and deployment triggers. Delete retired runtime containers/volumes and obsolete signing credentials only after backups are verified and replacement recovery succeeds. Retained offline backups are recovery artifacts, not runtime dependencies. Never mount predecessor stores or conversion tools into the installed application.
 
-In production, keep `/health/ready` as the process/intake readiness contract.
-Use `/health/status` for a privacy-safe aggregate diagnosis and `/metrics` for
-Prometheus. The isolated writer separately serves localhost readiness on port
-4360; Compose uses that completed-cycle signal for container health.
+## Recovery
 
-The default model configuration requests the exact `grok-4.6` identifier with
-high reasoning effort. The status and metrics build series report the
-configured model, reasoning effort, and image source revision so deployment
-verification can compare the running artifact with its approved contract.
+The default is to repair the replacement while Actual remains usable manually. Stop the worker before recovery. Preserve its SQLite database, WAL, Actual cache, and uncertain operation journal. A confirmed desired state completes an operation; unchanged expected state permits a bounded retry; any other state needs reconciliation. A failed notification never reruns a financial edit.
 
-## Compose services
+Never restore an old Actual snapshot over newer household transactions. Before activation, a failed conversion can resume its reviewed manifest or restore the exact predecessor while intake remains paused. After new work has arrived, reconcile the journal and current ledger before any restore.
 
-The generic `compose.yaml` defines:
+Back up the application database with SQLite's online backup API, and restore-test it alongside Actual exports and authenticated original-file references. Memory cannot be reconstructed completely from Actual. Suppression markers must survive restoration and index rebuilds.
 
-- `finance-bot`
-- `document-preparer`
-- `actual-reader`
-- `actual-server`
-- `actual-writer`
+## Acceptance and observation
 
-Copy `.env.example` to an untracked `.env`, adapt the non-secret values, and
-create each file-backed secret referenced by the Compose configuration. Render
-the final model before building or starting it.
+Health endpoints expose only aggregate work status. Check the image revision, one-writer lock, document namespace, authenticated Talk delivery, notes, preserved account/transaction/category/rule identities, and restart recovery. Keep model cost/latency and completed-work counters for comparison against the predecessor.
 
-### Use rolling published images
+The normal bank import remains manual/weekly. A subsequent real import must match a waiting receipt without new extraction or operator repair. Measure at least 50% lower model cost on a comparable workload, including memory work; do not substitute synthetic orchestration checks for extraction quality or claim savings from fewer containers alone.
 
-This is the recommended mode for a private stack that follows the public
-repository. `.env.example` defaults all four application services to their
-GHCR `latest` tags and sets `HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=always`.
+## Document sandbox policy
 
-Every successful `main`
-[publishing workflow](https://github.com/deftmartian/household-finance/actions/workflows/publish-images.yml)
-first publishes four Linux AMD64 images under the full 40-character commit.
-Only after all matrix jobs succeed does a final job resolve every commit tag
-and promote those exact four digests to `latest`.
-
-GHCR moves the four package tags during one final promotion job. Confirm that
-job is green before a manual deployment. The application services use stable
-interfaces and do not require an atomic, same-revision restart, so an Arcane
-installation with auto-update enabled may update each eligible service on its
-normal schedule.
-
-Actual-read protocol v2 explicitly negotiates partial bank-sync freshness.
-During a rolling release, an older client receives a conservative v1-compatible
-failed outcome without the new aggregate summary; a v2 client receives the
-partial outcome and privacy-safe attempted/succeeded/failed account counts.
-The reader also maintains a v1 freshness-state mirror so its persisted state
-can be rolled back independently.
-
-The finance-bot uses a dedicated long-timeout reader client for scheduled bank
-syncs so the aggregate result reaches its health and metrics endpoints even
-when an import takes longer than an interactive Actual read. Bank freshness and
-partial or failed outcomes remain diagnostic only; they do not degrade process
-health. Operators may use a manual refresh cadence without turning normal bank
-staleness into an availability incident. Queue age and other operational
-failures remain actionable.
-
-To deploy manually:
-
-```sh
-docker compose --env-file .env config --quiet
-docker compose --env-file .env config --images
-docker compose --env-file .env pull \
-  finance-bot document-preparer actual-reader actual-writer
-docker compose --env-file .env up -d --no-build
-docker compose --env-file .env ps
-docker compose --env-file .env images
-```
-
-If promotion fails after moving only some tags, rerun the failed promotion job.
-Its digest-pinned sources make the operation idempotent, and the final all-four
-check confirms that every rolling tag converged.
-
-`pull_policy: always` refreshes a rolling tag when Compose creates or recreates
-a service; it does not schedule a deployment by itself. Arcane auto-update is
-the scheduler when enabled globally. The four application services deliberately
-omit Arcane's updater opt-out and follow `latest`.
-
-`@actual-app/api` is an embedded application dependency rather than a separate
-container. It and `actual-server` stay pinned to the same release. A weekly
-Dependabot multi-ecosystem group opens one public pull request that updates the
-npm lockfile and Compose example together. The separately deployed server stays
-opted out of Arcane updates until its reviewed deployment change is merged.
-
-### Build this checkout locally
-
-The Compose file retains build targets for all four application services. To
-build the current checkout instead of using GHCR, set these overrides in the
-untracked `.env`:
-
-```dotenv
-HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=build
-FINANCE_BOT_IMAGE=household-finance-bot:local
-DOCUMENT_PREPARER_IMAGE=household-finance-document-preparer:local
-ACTUAL_READER_IMAGE=household-finance-actual-reader:local
-ACTUAL_WRITER_IMAGE=household-finance-actual-writer:local
-```
-
-Then render and build it:
-
-```sh
-docker compose --env-file .env config --quiet
-docker compose --env-file .env build
-```
-
-### Pin an immutable image set
-
-For a reviewed production promotion or rollback, select one overall-green
-workflow and use all four top-level digests from that same commit:
-
-```dotenv
-HOUSEHOLD_FINANCE_IMAGE_PULL_POLICY=missing
-FINANCE_BOT_IMAGE=ghcr.io/deftmartian/household-finance-bot:<full-commit>@sha256:<digest>
-DOCUMENT_PREPARER_IMAGE=ghcr.io/deftmartian/household-finance-document-preparer:<full-commit>@sha256:<digest>
-ACTUAL_READER_IMAGE=ghcr.io/deftmartian/household-finance-actual-reader:<full-commit>@sha256:<digest>
-ACTUAL_WRITER_IMAGE=ghcr.io/deftmartian/household-finance-actual-writer:<full-commit>@sha256:<digest>
-```
-
-The package pages are linked from the README, and each publish job records its
-top-level digest in the workflow summary. The additional `unknown/unknown`
-entries visible on a package page are provenance and SBOM attestations, not
-runnable platforms. Render and inspect the pinned set before activating it:
-
-```sh
-docker compose --env-file .env config --quiet
-docker compose --env-file .env config --images
-docker compose --env-file .env pull \
-  finance-bot document-preparer actual-reader actual-writer
-docker compose --env-file .env up -d --no-build
-docker compose --env-file .env ps
-docker compose --env-file .env images
-```
-
-Do not mix commits, use a child-platform or attestation digest in place of the
-workflow-reported top-level digest, or switch the pull policy while any local
-image name remains. `actual-server` uses its separately reviewed version pin.
-
-Publishing creates registry artifacts; it does not deploy them. Keep
-site-specific configuration in a private deployment repository. That repository
-can follow the rolling tags with its platform's updater, redeploy manually, or
-update digest pins in a reviewed change. Reverting a pin change selects the
-prior image set for rollback.
-
-The reader and writer run as UID/GID `1000:1000`. Their generated contracts
-must be readable by that identity; mode `0400` with matching ownership is the
-usual production setting.
-
-## Actual Budget provisioning
-
-Build the project and inspect the target budget before applying any changes:
-
-```sh
-pnpm build
-
-ACTUAL_PROVISION_MODE=inspect \
-ACTUAL_SERVER_URL=https://actual.example.test \
-ACTUAL_SERVER_PASSWORD_FILE=/absolute/private/actual-password.txt \
-ACTUAL_API_DATA_DIR=/absolute/private/actual-api-data \
-node scripts/provision-actual-production.mjs
-```
-
-Use the reported account and category names to create a private account plan
-from `config/account-plan.example.json`. Apply mode provisions the tracked
-category plan and writes the reader contract, writer contract, and model-safe
-taxonomy:
-
-```sh
-ACTUAL_PROVISION_MODE=apply \
-ACTUAL_APPLY_PROVISIONING=true \
-ACTUAL_SERVER_URL=https://actual.example.test \
-ACTUAL_SERVER_PASSWORD_FILE=/absolute/private/actual-password.txt \
-ACTUAL_API_DATA_DIR=/absolute/private/actual-api-data \
-ACTUAL_ACCOUNT_PLAN_FILE=/absolute/private/account-plan.json \
-ACTUAL_CATEGORY_PLAN_FILE="$PWD/config/default-household-category-plan.json" \
-ACTUAL_PRODUCTION_CONTRACT_OUTPUT_PATH=/absolute/private/actual-production-contract.json \
-ACTUAL_READ_CONTRACT_OUTPUT_PATH=/absolute/private/actual-read-contract.json \
-ACTUAL_CATEGORY_TAXONOMY_OUTPUT_PATH=/absolute/private/category-taxonomy.json \
-node scripts/provision-actual-production.mjs
-```
-
-Inspect mode is read-only. Apply mode validates exact live identities before it
-writes anything.
-
-## Nextcloud provisioning
-
-Create the dedicated service identity and unattached Talk bot:
-
-```sh
-./scripts/provision-nextcloud-service.sh
-```
-
-Then create and verify the production Talk room and receipt archive:
-
-```sh
-./scripts/provision-nextcloud-production-resources.sh
-```
-
-The private room must contain the household members, application bot, and
-dedicated Nextcloud service identity. The bot installation alone does not give
-the WebDAV identity access to Talk attachments.
-
-## Production activation
-
-The tracked configuration defaults to disabled intake. A production deployment
-typically sets:
-
-```text
-INTAKE_MODE=production
-ACTUAL_BANK_SYNC_INTERVAL_HOURS=4
-TRANSACTION_CATEGORIZATION_MINIMUM_AUTO_APPLY_CONFIDENCE=0.8
-ACTUAL_AUTO_APPROVAL_ENABLED=true
-```
-
-Auto-approval is a separate switch because it grants write authority. Review
-the rendered Compose model and the generated Actual contracts before enabling
-it.
-
-## Secrets
-
-Credentials remain in file-backed secrets and are mounted only into the
-services that use them. The Actual intent-signing secret is a JSON keyring:
-
-```json
-{
-  "schemaVersion": "actual-update-signing-keyring.v1",
-  "targetReferenceKey": "<stable random key>",
-  "keys": { "production-v1": "<active random key>" }
-}
-```
-
-`ACTUAL_UPDATE_SIGNING_KEY_ID` names the active entry in `keys`. Keep the
-target-reference key stable across rotations, and retain old signing keys while
-queued intents still reference them.
-
-Do not store secret values in `.env`, logs, shell history, or the repository.
+`config/document-seccomp.json` derives from the Moby default allowlist
+(https://github.com/moby/profiles/blob/3c28324314729dbade8287e868eef6338c42807a/seccomp/default.json), with explicit
+allowances for `clone`, `unshare`, `mount`, `umount2`, `pivot_root`, and
+`sethostname` needed by the nested Bubblewrap sandbox. The outer container stays
+unprivileged, drops every capability, and retains no-new-privileges and a
+read-only root. The parser receives no application data, secrets, process tree,
+or network. Run `scripts/verify-container.sh IMAGE` on the deployment engine;
+Docker's default policy blocks the required nested namespace creation.
