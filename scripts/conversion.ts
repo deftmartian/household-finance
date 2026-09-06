@@ -114,6 +114,7 @@ export function planConversion(
   value: unknown,
   archiveBase: string,
   detailDirectory = 'Finance/Receipts/Purchase Details',
+  detailLinks: Record<string, string> = {},
 ): Conversion {
   const snapshot = snapshotSchema.parse(value);
   const origin = new URL(archiveBase);
@@ -275,7 +276,11 @@ export function planConversion(
       const body = purchaseDetails(p);
       let detailUrl: string | undefined;
       if (body.length > 6500) {
-        detailUrl = fileUrl(archiveBase, `${detailDirectory}/${p.id}-1.txt`);
+        const storageUrl = fileUrl(
+          archiveBase,
+          `${detailDirectory}/${p.id}-1.txt`,
+        );
+        detailUrl = detailLinks[storageUrl] ?? storageUrl;
         if (!details.some((d) => d.url === detailUrl))
           details.push({ url: detailUrl, body });
       }

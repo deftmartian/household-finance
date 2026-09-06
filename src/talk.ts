@@ -295,7 +295,12 @@ export class Talk {
         throw new Fault('archive-content-conflict');
     } else if (![201, 204].includes(response.status))
       throw new Fault('archive-failed', true);
-    return { hash: actualHash, url, mediaType, messageId };
+    return {
+      hash: actualHash,
+      url: await this.fileLink(url),
+      mediaType,
+      messageId,
+    };
   }
   async directory(path: string): Promise<void> {
     let current = '';
@@ -329,7 +334,34 @@ export class Talk {
         throw new Fault('detail-conflict');
     } else if (![201, 204].includes(r.status))
       throw new Fault('detail-publish-failed', true);
-    return url;
+    return this.fileLink(url);
+  }
+  private async fileLink(url: string): Promise<string> {
+    const response = await this.dav(url, {
+      method: 'PROPFIND',
+      headers: { depth: '0', 'content-type': 'application/xml' },
+      body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><oc:fileid/></d:prop></d:propfind>',
+    });
+    if (response.status !== 207) throw new Fault('archive-link-failed', true);
+    const parsed = new XMLParser({
+      removeNSPrefix: true,
+      parseTagValue: false,
+    }).parse((await readBytes(response, 32768)).toString()) as unknown;
+    const result = record(record(parsed).multistatus).response;
+    const rows = Array.isArray(result) ? result : [result];
+    const ids = rows.flatMap((row) => {
+      const blocks = record(row).propstat;
+      return (Array.isArray(blocks) ? blocks : [blocks]).flatMap((block) => {
+        const value = record(block);
+        const fileId = String(record(value.prop).fileid ?? '');
+        return String(value.status).includes('200') &&
+          /^[1-9][0-9]*$/.test(fileId)
+          ? [fileId]
+          : [];
+      });
+    });
+    if (ids.length !== 1) throw new Fault('archive-link-ambiguous');
+    return `${this.config.url}/index.php/f/${ids[0]}`;
   }
   async history(cursor?: string, future = false): Promise<ChatMessage[]> {
     const url = new URL(

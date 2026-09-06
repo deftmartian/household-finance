@@ -54,11 +54,33 @@ try {
       throw new Error('talk-cursor-unavailable');
     phase = 'snapshot';
     const source = await snapshot();
-    const plan = planConversion(
+    const initial = planConversion(
       source,
       base,
       c.talk.archive + '/Purchase Details',
     );
+    const detailLinks: Record<string, string> = {};
+    for (const detail of initial.details) {
+      const purchase = initial.purchases.find(
+        (p) => purchaseDetails(p) === detail.body,
+      );
+      if (!purchase) throw new Error('unknown-purchase-detail');
+      detailLinks[detail.url] = await talk.details(
+        purchase.id,
+        purchase.revision,
+        detail.body,
+      );
+    }
+    const plan = planConversion(
+      source,
+      base,
+      c.talk.archive + '/Purchase Details',
+      detailLinks,
+    );
+    writeFileSync(root + '/detail-links.json', JSON.stringify(detailLinks), {
+      mode: 0o600,
+      flag: 'wx',
+    });
     writeFileSync(root + '/source.json', JSON.stringify(source), {
       mode: 0o600,
       flag: 'wx',
@@ -87,7 +109,12 @@ try {
     if (
       canonical(plan) !==
       canonical(
-        planConversion(source, base, c.talk.archive + '/Purchase Details'),
+        planConversion(
+          source,
+          base,
+          c.talk.archive + '/Purchase Details',
+          read('detail-links.json') as Record<string, string>,
+        ),
       )
     )
       throw new Error('conversion-manifest-mismatch');
