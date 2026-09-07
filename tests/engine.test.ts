@@ -314,3 +314,25 @@ it('lets the model correct missing transaction search dates without losing the q
   ).toEqual(['start', 'end']);
   expect(cp.done).toBe(true);
 });
+
+it('asks for clarification when a purchase category proposal is outside the category contract', async () => {
+  const f = setup([
+    {
+      allocations: [{ category: 'missing-category', amount: -1575 }],
+      needsClarification: false,
+      question: '',
+    },
+  ]);
+  f.ledger.seed(purchase());
+  await f.engine.discover();
+  await f.engine.run(f.store.next()!);
+  expect(f.ledger.writes).toBe(0);
+  expect(
+    f.store.db
+      .prepare("SELECT count(*) AS n FROM jobs WHERE state='attention'")
+      .get(),
+  ).toEqual({ n: 0 });
+  expect(f.store.db.prepare('SELECT count(*) AS n FROM replies').get()).toEqual(
+    { n: 1 },
+  );
+});

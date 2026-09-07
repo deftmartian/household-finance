@@ -570,6 +570,24 @@ export class Engine {
             'I need the item prices or your intended category amounts before splitting this purchase. How should it be split?';
         }
       }
+      if (!categorized.needsClarification) {
+        try {
+          validateAllocations(
+            -p.total,
+            categorized.allocations,
+            new Set(categories.map((c) => c.id)),
+          );
+        } catch (error) {
+          if (
+            !(error instanceof Fault) ||
+            error.message !== 'invalid-allocation'
+          )
+            throw error;
+          categorized.needsClarification = true;
+          categorized.question =
+            'I could not validate the proposed category and amounts. Which category should this purchase use?';
+        }
+      }
       if (
         !categorized.allocations.length ||
         categorized.needsClarification ||

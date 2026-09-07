@@ -250,6 +250,13 @@ export class Writer {
     expected: Transaction,
     desired: Transaction,
   ): Promise<void> {
+    const comparable = (t: Transaction | undefined) =>
+      t
+        ? canonical({
+            ...t,
+            children: [...t.children].sort((a, b) => a.id.localeCompare(b.id)),
+          })
+        : canonical(t);
     const immutable = (t: Transaction) => ({
       id: t.id,
       account: t.account,
@@ -290,11 +297,11 @@ export class Writer {
     const current = (await this.ledger.transactions()).find(
       (t) => t.id === expected.id,
     );
-    if (canonical(current) === canonical(desired)) {
+    if (comparable(current) === comparable(desired)) {
       this.store.operationState(operationId, 'complete');
       return;
     }
-    if (canonical(current) !== canonical(expected)) {
+    if (comparable(current) !== comparable(expected)) {
       this.store.operationState(operationId, 'attention');
       throw new Fault('transaction-conflict');
     }
@@ -308,7 +315,7 @@ export class Writer {
     const readback = (await this.ledger.transactions()).find(
       (t) => t.id === expected.id,
     );
-    if (canonical(readback) !== canonical(desired)) {
+    if (comparable(readback) !== comparable(desired)) {
       this.store.operationState(operationId, 'attention');
       throw new Fault('transaction-readback-conflict');
     }

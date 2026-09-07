@@ -235,3 +235,18 @@ describe('autonomous household context', () => {
     ).toThrow('scope');
   });
 });
+
+it('recognizes completed splits despite Actual returning children in a different order', async () => {
+  const s = store(),
+    ledger = new FakeLedger(),
+    writer = new Writer(s, ledger);
+  const before = transaction();
+  const desired = writer.desired(before, [
+    { category: 'food', amount: -1000 },
+    { category: 'school', amount: -575 },
+  ]);
+  ledger.rows = [{ ...desired, children: [...desired.children].reverse() }];
+  await writer.apply('reordered-splits', before, desired);
+  expect(ledger.writes).toBe(0);
+  expect(s.operation('reordered-splits')?.state).toBe('complete');
+});
