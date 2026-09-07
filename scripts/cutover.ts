@@ -123,7 +123,9 @@ try {
     const target = {
       snapshot,
       current: async (change: Change) => {
-        await api.sync();
+        // Verification never writes; its full before/after snapshots sync once each.
+        // Avoid hundreds of redundant server syncs while comparing cached notes.
+        if (mode !== 'verify') await api.sync();
         if (change.kind === 'note')
           return (await api.getNote(change.id))?.note ?? null;
         const parent = source.transactions.find(
@@ -204,6 +206,17 @@ try {
     );
   }
 } catch (error) {
+  writeFileSync(
+    root + '/failure.json',
+    JSON.stringify({
+      phase,
+      name: error instanceof Error ? error.name : 'unknown',
+      code: error instanceof Error && 'code' in error ? error.code : null,
+      message: error instanceof Error ? error.message : 'unknown',
+      stack: error instanceof Error ? error.stack : null,
+    }),
+    { mode: 0o600 },
+  );
   process.stdout.write(
     JSON.stringify({
       phase,
