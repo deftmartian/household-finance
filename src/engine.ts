@@ -737,7 +737,24 @@ export class Engine {
       this.store.finish(job.id);
       return;
     }
-    if (cp.turn >= 8) throw new Fault('conversation-step-limit');
+    if (cp.turn >= 8 && !cp.pending) {
+      cp.pending = await this.model.structured(
+        z.object({
+          action: z.literal('answer'),
+          arguments: z.literal('{}'),
+          reply: z.string().min(1).max(12000),
+        }),
+        INSTRUCTIONS +
+          '\nThe tool-call budget is exhausted. Answer the current message now using the evidence already retrieved. Clearly state any unresolved gaps. Do not claim writes or searches that did not happen. No further tool actions are available.',
+        {
+          message,
+          currentDate: new Date().toISOString().slice(0, 10),
+          history: cp.history,
+          context: this.memory.context(message.message, message.parent),
+        },
+      );
+      this.store.checkpoint(job.id, cp);
+    }
     if (!cp.pending) {
       if (cp.contextRevision !== this.store.revision()) cp.history = [];
       cp.contextRevision = this.store.revision();

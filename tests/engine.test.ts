@@ -354,3 +354,29 @@ it('allows bounded transaction results across more than one year of history', as
     f.store.db.prepare("SELECT state FROM jobs WHERE id='2'").get(),
   ).toEqual({ state: 'done' });
 });
+
+it('delivers a final evidence-based answer when the tool budget is exhausted', async () => {
+  const f = setup([
+    {
+      action: 'answer',
+      arguments: '{}',
+      reply:
+        'I checked the available evidence; one detail still needs clarification.',
+    },
+  ]);
+  const request = message('Check the pending work.');
+  f.store.intake(request, 'question', request);
+  f.store.checkpoint(request.id, {
+    turn: 8,
+    history: [{ action: 'read_work', result: [] }],
+    contextRevision: f.store.revision(),
+  });
+  await f.engine.run(f.store.next()!);
+  expect(
+    f.store.db.prepare("SELECT state FROM jobs WHERE id='2'").get(),
+  ).toEqual({ state: 'done' });
+  expect(f.store.db.prepare('SELECT count(*) AS n FROM replies').get()).toEqual(
+    { n: 1 },
+  );
+  expect(f.model.structured).toHaveBeenCalledTimes(1);
+});
