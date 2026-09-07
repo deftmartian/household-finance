@@ -42,3 +42,29 @@ it('refuses to emit a link when the server has not confirmed a file identity', a
     new Talk(config).details('purchase', 1, 'synthetic details'),
   ).rejects.toThrow('link');
 });
+it('requests the original representation to preserve the conditional-download ETag', async () => {
+  const bytes = Buffer.from('{"synthetic":true}');
+  const fetcher = vi.fn(async (_url: unknown, init: RequestInit) => {
+    if (init.method === 'SEARCH')
+      return new Response(
+        `<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>/remote.php/dav/files/service/upload.json</d:href><d:propstat><d:prop><oc:fileid>12345</oc:fileid><d:getetag>"original"</d:getetag><oc:size>${bytes.length}</oc:size></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`,
+        { status: 207 },
+      );
+    const headers = new Headers(init.headers);
+    expect(headers.get('accept-encoding')).toBe('identity');
+    expect(headers.get('if-match')).toBe('"original"');
+    return new Response(bytes, {
+      status: 200,
+      headers: { etag: '"original"', 'content-length': String(bytes.length) },
+    });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  expect(
+    await new Talk(config).download({
+      fileId: '12345',
+      etag: 'original',
+      size: bytes.length,
+      mediaType: 'application/json',
+    }),
+  ).toEqual(bytes);
+});

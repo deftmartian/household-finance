@@ -256,3 +256,34 @@ it('preserves differing evidence for the same order without replacing prior fact
   expect(saved.evidence?.alternateRecords).toHaveLength(1);
   expect(f.ledger.writes).toBe(0);
 });
+it('uses bank cents for a single model-selected category', async () => {
+  const f = setup([
+    {
+      allocations: [{ category: 'food', amount: 1575 }],
+      needsClarification: false,
+      question: '',
+    },
+  ]);
+  await f.engine.discover();
+  await f.engine.run(f.store.next()!);
+  expect(f.ledger.rows[0]!.category).toBe('food');
+  expect(f.ledger.rows[0]!.amount).toBe(-1575);
+});
+it('asks for split evidence instead of inventing a bank-only split', async () => {
+  const f = setup([
+    {
+      allocations: [
+        { category: 'food', amount: -1000 },
+        { category: 'school', amount: -575 },
+      ],
+      needsClarification: false,
+      question: '',
+    },
+  ]);
+  await f.engine.discover();
+  await f.engine.run(f.store.next()!);
+  expect(f.ledger.writes).toBe(0);
+  expect(f.store.db.prepare('SELECT count(*) AS n FROM replies').get()).toEqual(
+    { n: 1 },
+  );
+});

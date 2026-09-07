@@ -9,6 +9,7 @@ import { Model } from './model.js';
 import { Engine } from './engine.js';
 import { Talk, webhook, fromHistory } from './talk.js';
 import { Fault } from './domain.js';
+import { metrics } from './metrics.js';
 
 export async function main(): Promise<void> {
   const c = config(process.env.FINANCE_CONFIG ?? '/run/secrets/finance_config');
@@ -51,6 +52,19 @@ export async function main(): Promise<void> {
     lastBackfill = 0,
     lastLoop = Date.now();
   const server = createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/metrics') {
+      res.writeHead(200, {
+        'content-type': 'text/plain; version=0.0.4; charset=utf-8',
+      });
+      res.end(
+        metrics(store, !stopping && Date.now() - lastLoop <= 180000, {
+          revision: process.env.SOURCE_REVISION ?? 'development',
+          model: c.model.model,
+          effort: c.model.effort,
+        }),
+      );
+      return;
+    }
     if (
       req.method === 'GET' &&
       (req.url === '/health/ready' || req.url === '/health/status')

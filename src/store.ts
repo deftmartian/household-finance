@@ -159,6 +159,17 @@ export class Store {
   }
   fail(job: Job, error: unknown): void {
     const safe = error instanceof Fault ? error : new Fault('operation-failed');
+    const reason =
+      safe.code === 'model-zdr-required'
+        ? 'privacy'
+        : safe.code === 'model-invalid-response'
+          ? 'model'
+          : safe.code === 'model-network-error' ||
+              /^model-http-(429|5[0-9][0-9])$/.test(safe.code)
+            ? 'transport'
+            : 'other';
+    const metricKey = 'metric-failure:' + reason;
+    this.setMeta(metricKey, String(Number(this.getMeta(metricKey) ?? 0) + 1));
     const retry = safe.retry && job.attempts < 3;
     this.db
       .prepare('UPDATE jobs SET state=?,error=?,due=? WHERE id=?')

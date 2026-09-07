@@ -244,7 +244,7 @@ export class Talk {
       throw new Fault('nextcloud-metadata-mismatch');
     const response = await this.dav(url.href, {
       method: 'GET',
-      headers: { 'if-match': `"${a.etag}"` },
+      headers: { 'if-match': `"${a.etag}"`, 'accept-encoding': 'identity' },
     });
     if (response.status !== 200)
       throw new Fault('nextcloud-download-failed', response.status >= 500);

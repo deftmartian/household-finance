@@ -534,7 +534,17 @@ export class Engine {
               bankTotal: targets.reduce((n, t) => n + t.amount, 0),
             },
           );
-      if (!p.allocations.length && categorized.allocations.length > 1) {
+      if (!p.allocations.length && categorized.allocations.length === 1) {
+        categorized.allocations[0]!.amount = targets.reduce(
+          (n, t) => n + t.amount,
+          0,
+        );
+      }
+      if (
+        !p.allocations.length &&
+        (categorized.allocations.length > 1 ||
+          categorized.itemCategories.length > 0)
+      ) {
         try {
           categorized.allocations = itemAllocations(
             p,
@@ -548,6 +558,7 @@ export class Engine {
         }
       }
       if (
+        !categorized.allocations.length ||
         categorized.needsClarification ||
         (targets.length > 1 && categorized.allocations.length !== 1)
       ) {
@@ -655,7 +666,9 @@ export class Engine {
               context: this.memory.context(t.merchant, null),
             },
           );
-      if (result.needsClarification) {
+      if (!rule && result.allocations.length === 1)
+        result.allocations[0]!.amount = t.amount;
+      if (result.needsClarification || result.allocations.length !== 1) {
         this.store.queueReply(
           key(job.id, 'clarify'),
           '0',
