@@ -888,10 +888,7 @@ export class Engine {
           end: z.iso.date(),
         })
         .parse(input);
-      if (
-        Date.parse(p.end) < Date.parse(p.start) ||
-        Date.parse(p.end) - Date.parse(p.start) > 366 * 86400000
-      )
+      if (Date.parse(p.end) < Date.parse(p.start))
         throw new Fault('query-date-range');
       await this.ledger.sync();
       return (await this.ledger.transactions())

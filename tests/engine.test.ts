@@ -336,3 +336,21 @@ it('asks for clarification when a purchase category proposal is outside the cate
     { n: 1 },
   );
 });
+
+it('allows bounded transaction results across more than one year of history', async () => {
+  const f = setup([
+    {
+      action: 'read_transactions',
+      arguments: '{"query":"","start":"2020-01-01","end":"2026-09-07"}',
+      reply: '',
+    },
+    { action: 'answer', arguments: '{}', reply: 'History checked.' },
+  ]);
+  const request = message('Check my transaction history.');
+  f.store.intake(request, 'question', request);
+  await f.engine.run(f.store.next()!);
+  await f.engine.run(f.store.next()!);
+  expect(
+    f.store.db.prepare("SELECT state FROM jobs WHERE id='2'").get(),
+  ).toEqual({ state: 'done' });
+});
