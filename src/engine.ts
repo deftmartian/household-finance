@@ -725,6 +725,7 @@ export class Engine {
       cp.contextRevision = this.store.revision();
       cp.pending = await this.model.structured(decisionSchema, INSTRUCTIONS, {
         message,
+        currentDate: new Date().toISOString().slice(0, 10),
         context: this.memory.context(message.message, message.parent),
         categories: await this.ledger.categories(),
         history: cp.history,
@@ -741,13 +742,28 @@ export class Engine {
       this.store.finish(job.id);
       return;
     }
-    const input = JSON.parse(decision.arguments) as unknown;
-    const result = await this.action(
-      operationId,
-      message,
-      decision.action,
-      input,
-    );
+    let result: unknown;
+    try {
+      const input = JSON.parse(decision.arguments) as unknown;
+      result = await this.action(operationId, message, decision.action, input);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        result = {
+          error: 'invalid-tool-arguments',
+          issues: error.issues.map((issue) => ({
+            path: issue.path,
+            code: issue.code,
+          })),
+          instruction:
+            'Correct the arguments using the documented tool contract and retry.',
+        };
+      } else if (error instanceof SyntaxError) {
+        result = {
+          error: 'invalid-tool-json',
+          instruction: 'Return valid JSON arguments.',
+        };
+      } else throw error;
+    }
     if (decision.action === 'forget') cp.history = [];
     cp.contextRevision = this.store.revision();
     cp.history.push({ action: decision.action, result });

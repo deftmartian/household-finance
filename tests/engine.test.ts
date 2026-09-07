@@ -287,3 +287,30 @@ it('asks for split evidence instead of inventing a bank-only split', async () =>
     { n: 1 },
   );
 });
+
+it('lets the model correct missing transaction search dates without losing the question', async () => {
+  const f = setup([
+    { action: 'read_transactions', arguments: '{"query":""}', reply: '' },
+    {
+      action: 'read_transactions',
+      arguments: '{"query":"","start":"2026-09-01","end":"2026-09-07"}',
+      reply: '',
+    },
+    { action: 'answer', arguments: '{}', reply: 'Search completed.' },
+  ]);
+  const request = message('Show recent transactions.');
+  f.store.intake(request, 'question', request);
+  for (let i = 0; i < 3; i++) await f.engine.run(f.store.next()!);
+  const cp = JSON.parse(
+    (
+      f.store.db.prepare('SELECT checkpoint FROM jobs WHERE id=?').get('2') as {
+        checkpoint: string;
+      }
+    ).checkpoint,
+  );
+  expect(cp.history[0].result.error).toBe('invalid-tool-arguments');
+  expect(
+    cp.history[0].result.issues.map((v: { path: string[] }) => v.path[0]),
+  ).toEqual(['start', 'end']);
+  expect(cp.done).toBe(true);
+});
