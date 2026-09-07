@@ -228,7 +228,7 @@ it('preserves differing evidence for the same order without replacing prior fact
   const f = setup();
   const old = purchase();
   old.reference = 'ORDER-123';
-  old.id = key('reference', old.merchant!, old.reference, old.currency!);
+  old.id = 'existing-stable-purchase-id';
   f.ledger.seed(old);
   await f.engine.refresh();
   const facts = factsSchema.strip().parse(old);

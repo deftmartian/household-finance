@@ -313,7 +313,10 @@ export class Engine {
         const duplicate = this.purchases().find((p) =>
           p.sources.some((s) => s.hash === source.hash),
         );
-        if (duplicate) {
+        if (
+          duplicate &&
+          /^(image\/|application\/pdf$)/.test(source.mediaType)
+        ) {
           this.store.queueReply(
             key('duplicate', job.id, String(cp.index)),
             message.id,
@@ -395,7 +398,17 @@ export class Engine {
         transactions: [],
         allocations: [],
       });
-      const old = this.purchases().find((x) => x.id === p.id);
+      const existing = this.purchases().filter(
+        (x) =>
+          x.id === p.id ||
+          (p.reference !== null &&
+            x.reference === p.reference &&
+            x.currency === p.currency &&
+            x.merchant?.trim().toLowerCase() ===
+              p.merchant?.trim().toLowerCase()),
+      );
+      if (existing.length > 1) throw new Fault('purchase-reference-ambiguous');
+      const old = existing[0];
       if (old) {
         const additions = p.sources.filter(
           (source) => !old.sources.some((v) => v.hash === source.hash),
