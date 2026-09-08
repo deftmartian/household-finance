@@ -288,9 +288,9 @@ it('asks for split evidence instead of inventing a bank-only split', async () =>
   );
 });
 
-it('lets the model correct missing transaction search dates without losing the question', async () => {
+it('lets the model correct malformed transaction search arguments without losing the question', async () => {
   const f = setup([
-    { action: 'read_transactions', arguments: '{"query":""}', reply: '' },
+    { action: 'read_transactions', arguments: '{"query":123}', reply: '' },
     {
       action: 'read_transactions',
       arguments: '{"query":"","start":"2026-09-01","end":"2026-09-07"}',
@@ -311,7 +311,7 @@ it('lets the model correct missing transaction search dates without losing the q
   expect(cp.history[0].result.error).toBe('invalid-tool-arguments');
   expect(
     cp.history[0].result.issues.map((v: { path: string[] }) => v.path[0]),
-  ).toEqual(['start', 'end']);
+  ).toEqual(['query']);
   expect(cp.done).toBe(true);
 });
 
@@ -379,4 +379,63 @@ it('delivers a final evidence-based answer when the tool budget is exhausted', a
     { n: 1 },
   );
   expect(f.model.structured).toHaveBeenCalledTimes(1);
+});
+
+it('searches uncategorized records by merchant separately from categorization state', async () => {
+  const args = JSON.stringify({ query: 'Example', uncategorized: true });
+  const f = setup([
+    { action: 'read_transactions', arguments: args, reply: '' },
+  ]);
+  f.ledger.rows = [
+    transaction(),
+    { ...transaction(), id: 'categorized', category: 'food' },
+    { ...transaction(), id: 'transfer', transfer: true },
+  ];
+  const request = message('Find uncategorized Example transactions.');
+  f.store.intake(request, 'question', request);
+  await f.engine.run(f.store.next()!);
+  const cp = JSON.parse(
+    (
+      f.store.db.prepare("SELECT checkpoint FROM jobs WHERE id='2'").get() as {
+        checkpoint: string;
+      }
+    ).checkpoint,
+  );
+  expect(cp.history[0].arguments).toBe(args);
+  expect(cp.history[0].result).toMatchObject({
+    searchAvailable: true,
+    availableCount: 3,
+    uncategorizedCount: 1,
+    total: 1,
+    returned: 1,
+    hasMore: false,
+  });
+  expect(cp.history[0].result.transactions[0].id).toBe('transaction-one');
+});
+
+it('reports receipt availability and matches independent item and merchant words', async () => {
+  const f = setup([
+    {
+      action: 'read_purchases',
+      arguments: '{"query":"Notebook Example"}',
+      reply: '',
+    },
+  ]);
+  f.ledger.seed(purchase());
+  const request = message('Find that notebook receipt.');
+  f.store.intake(request, 'question', request);
+  await f.engine.run(f.store.next()!);
+  const cp = JSON.parse(
+    (
+      f.store.db.prepare("SELECT checkpoint FROM jobs WHERE id='2'").get() as {
+        checkpoint: string;
+      }
+    ).checkpoint,
+  );
+  expect(cp.history[0].result).toMatchObject({
+    searchAvailable: true,
+    availableCount: 1,
+    total: 1,
+    hasMore: false,
+  });
 });
