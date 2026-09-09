@@ -6,6 +6,8 @@ The assistant accepts text and receipt photos, PDFs, JSON, CSV, TSV, and XLSX. K
 
 Purchase records live in namespaced Actual notes. Transactions show readable item details and preserve handwritten memos. Original files remain in Nextcloud. The application never provisions accounts, relinks banks, creates imported transactions, or changes balances. Existing Actual rules take precedence; ambiguous matches or unsupported split arithmetic require a conversational clarification.
 
+Complete cash and zero-total purchases remain as recorded evidence without waiting for a bank match. Linking a receipt preserves existing bank categories and split memos. Pending matches are reconsidered when the ledger changes; an unrelated receipt does not block categorization. Additional source evidence updates both the canonical purchase and its linked transaction notes. Consolidated duplicate records remain preserved and redirect future evidence to their surviving purchase.
+
 Household context lives in the application's SQLite database, with attribution, explicit/inferred status, scope, revision checks, and forgetting. SQLite full-text search and bounded history retrieval are sufficient for the initial deployment; there is no QMD dependency. Fresh financial facts come from Actual, not memory.
 
 ## Development

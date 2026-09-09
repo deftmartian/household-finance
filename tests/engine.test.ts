@@ -439,3 +439,117 @@ it('reports receipt availability and matches independent item and merchant words
     hasMore: false,
   });
 });
+
+it('does not rescan unchanged pending purchases or block unrelated bank categorization', async () => {
+  const f = setup();
+  const p = purchase();
+  p.total = 9999;
+  f.ledger.seed(p);
+  f.ledger.ruleCategory = async () => 'food';
+  await f.engine.discover();
+  let job;
+  while ((job = f.store.next())) await f.engine.run(job);
+  expect(f.ledger.rows[0]!.category).toBe('food');
+  await f.engine.discover();
+  while ((job = f.store.next())) await f.engine.run(job);
+  await f.engine.discover();
+  expect(f.store.next()).toBeUndefined();
+  expect(f.model.structured).not.toHaveBeenCalled();
+});
+
+it('records cash purchases without waiting for an impossible bank match', async () => {
+  const f = setup();
+  const p = purchase();
+  p.payment = 'cash';
+  f.ledger.seed(p);
+  f.ledger.rows = [];
+  await f.engine.discover();
+  await f.engine.run(f.store.next()!);
+  expect((await f.ledger.purchases())[0]!.state).toBe('recorded');
+  expect(f.model.structured).not.toHaveBeenCalled();
+});
+
+it('links a receipt while preserving existing split categories and handwritten child notes', async () => {
+  const f = setup();
+  f.ledger.seed(purchase());
+  f.ledger.rows[0]!.children = [
+    { id: 'child-a', amount: -1000, category: 'food', notes: 'Keep this memo' },
+    { id: 'child-b', amount: -575, category: 'school', notes: '' },
+  ];
+  const before = structuredClone(f.ledger.rows[0]!.children);
+  await f.engine.discover();
+  await f.engine.run(f.store.next()!);
+  expect(f.ledger.rows[0]!.children).toEqual(before);
+  expect(f.ledger.rows[0]!.notes).toContain('Milk');
+  expect((await f.ledger.purchases())[0]!.state).toBe('linked');
+  expect(f.model.structured).not.toHaveBeenCalled();
+});
+
+it('updates linked transaction notes when an additional receipt source arrives', async () => {
+  const f = setup();
+  const p = purchase();
+  p.state = 'linked';
+  p.reference = 'ORDER-LINKED';
+  p.allocations = [{ category: 'food', amount: -1575 }];
+  p.transactions = [{ id: transaction().id, account: 'card', amount: -1575 }];
+  f.ledger.seed(p);
+  f.ledger.rows[0]!.category = 'food';
+  f.ledger.rows[0]!.notes = withPurchaseNote(transaction().notes, p);
+  f.engine.options.prepare = async () => ({
+    type: 'facts',
+    facts: [factsSchema.strip().parse(p)],
+    mediaType: 'text/csv',
+  });
+  f.talk.archive.mockResolvedValue({
+    ...p.sources[0]!,
+    hash: 'b'.repeat(64),
+    url: 'https://cloud.example.test/additional.csv',
+    messageId: '2',
+  });
+  const incoming = message('');
+  incoming.attachments = [
+    { fileId: '123', etag: 'abc', size: 4, mediaType: 'text/csv' },
+  ];
+  f.store.intake(incoming, 'attachment', incoming);
+  await f.engine.run(f.store.next()!);
+  expect(f.ledger.rows[0]!.category).toBe('food');
+  expect(f.ledger.rows[0]!.notes).toContain('additional.csv');
+  expect(f.ledger.rows[0]!.notes).toContain('My handwritten memo');
+});
+
+it('resolves new evidence to the survivor of a consolidated duplicate', async () => {
+  const f = setup();
+  const p = purchase();
+  p.reference = 'ORDER-MERGED';
+  f.ledger.seed(p);
+  f.ledger.seed({
+    ...p,
+    id: 'retired-copy',
+    state: 'discarded',
+    evidence: { mergedInto: p.id },
+  });
+  f.engine.options.prepare = async () => ({
+    type: 'facts',
+    facts: [factsSchema.strip().parse(p)],
+    mediaType: 'text/csv',
+  });
+  f.talk.archive.mockResolvedValue({
+    ...p.sources[0]!,
+    hash: 'b'.repeat(64),
+    messageId: '2',
+  });
+  const incoming = message('');
+  incoming.attachments = [
+    { fileId: '123', etag: 'abc', size: 4, mediaType: 'text/csv' },
+  ];
+  f.store.intake(incoming, 'attachment', incoming);
+  await f.engine.run(f.store.next()!);
+  expect(
+    (await f.ledger.purchases()).find((x) => x.id === p.id)!.sources,
+  ).toHaveLength(2);
+  expect(
+    f.store.db
+      .prepare("SELECT count(*) as n FROM jobs WHERE state='attention'")
+      .get(),
+  ).toEqual({ n: 0 });
+});

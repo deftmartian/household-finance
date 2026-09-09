@@ -192,12 +192,32 @@ export class Engine {
   async discover(): Promise<void> {
     await this.refresh();
     const transactions = await this.ledger.transactions();
+    const fingerprint = hash(transactions);
+    const ledgerChanged =
+      this.store.getMeta('purchase-scan-fingerprint') !== fingerprint;
+    const pendingMatches = this.purchases()
+      .filter((p) => p.state === 'pending')
+      .flatMap((p) => {
+        try {
+          return matches(
+            p,
+            transactions.filter((t) =>
+              this.options.writeAccounts.has(t.account),
+            ),
+            this.options.currency,
+          )
+            .flat()
+            .map((t) => t.id);
+        } catch {
+          return [];
+        }
+      });
     for (const p of this.purchases().filter((p) => p.state === 'pending')) {
       const jobId = key('purchase', p.id, String(p.revision));
       const existing = this.store.db
         .prepare('SELECT state FROM jobs WHERE id=?')
         .get(jobId) as { state: string } | undefined;
-      if (existing?.state === 'done')
+      if (existing?.state === 'done' && ledgerChanged)
         this.store.db
           .prepare("UPDATE jobs SET state='ready',due=?,attempts=0 WHERE id=?")
           .run(Date.now(), jobId);
@@ -216,20 +236,13 @@ export class Engine {
         !t.category &&
         !t.children.length,
     )) {
-      if (
-        this.purchases().some(
-          (p) =>
-            p.state === 'pending' &&
-            p.date &&
-            Math.abs(Date.parse(p.date) - Date.parse(t.date)) <= 7 * 86400000,
-        )
-      )
-        continue;
+      if (pendingMatches.includes(t.id)) continue;
       this.store.enqueue(key('categorize', t.id, hash(t)), 'categorize', {
         transaction: t,
         messageId: '0',
       });
     }
+    this.store.setMeta('purchase-scan-fingerprint', fingerprint);
   }
   private async attachment(job: Job): Promise<void> {
     const message = JSON.parse(job.payload) as Message;
@@ -359,6 +372,7 @@ export class Engine {
     cp.extracted ??= extracted;
     cp.prepared = { type: 'facts', facts, mediaType: cp.prepared.mediaType };
     this.store.checkpoint(job.id, cp);
+    await this.refresh();
     for (const fact of facts.slice(
       cp.factIndex ?? 0,
       (cp.factIndex ?? 0) + 5,
@@ -401,12 +415,13 @@ export class Engine {
       });
       const existing = this.purchases().filter(
         (x) =>
-          x.id === p.id ||
-          (p.reference !== null &&
-            x.reference === p.reference &&
-            x.currency === p.currency &&
-            x.merchant?.trim().toLowerCase() ===
-              p.merchant?.trim().toLowerCase()),
+          !x.evidence?.mergedInto &&
+          (x.id === p.id ||
+            (p.reference !== null &&
+              x.reference === p.reference &&
+              x.currency === p.currency &&
+              x.merchant?.trim().toLowerCase() ===
+                p.merchant?.trim().toLowerCase())),
       );
       if (existing.length > 1) throw new Fault('purchase-reference-ambiguous');
       const old = existing[0];
@@ -442,7 +457,7 @@ export class Engine {
             ],
           },
         });
-        await this.writer.publish(
+        await this.editPurchase(
           key('additional-source', purchaseId, hash(additions)),
           old,
           next,
@@ -500,6 +515,21 @@ export class Engine {
         this.store.finish(job.id);
         return;
       }
+      if (
+        (p.payment === 'cash' || p.total === 0) &&
+        p.date &&
+        p.merchant &&
+        p.currency &&
+        p.total !== null
+      ) {
+        await this.writer.publish(key(job.id, 'record'), p, {
+          ...p,
+          revision: p.revision + 1,
+          state: 'recorded',
+        });
+        this.store.finish(job.id);
+        return;
+      }
       const found = matches(
         p,
         (await this.ledger.transactions()).filter((t) =>
@@ -528,26 +558,56 @@ export class Engine {
       const categories = (await this.ledger.categories()).filter(
         (c) =>
           p.allocations.length ||
+          targets.every((t) =>
+            t.children.length
+              ? t.children.every((c) => c.category !== null)
+              : t.category !== null,
+          ) ||
           !this.options.automaticCategories ||
           this.options.automaticCategories.has(c.id),
       );
-      const categorized = p.allocations.length
+      const preserveCategories =
+        !p.allocations.length &&
+        targets.every((t) =>
+          t.children.length
+            ? t.children.every((c) => c.category !== null)
+            : t.category !== null,
+        );
+      const bankAllocations = new Map<string, number>();
+      if (preserveCategories)
+        for (const t of targets)
+          for (const a of t.children.length ? t.children : [t])
+            bankAllocations.set(
+              a.category!,
+              (bankAllocations.get(a.category!) ?? 0) + a.amount,
+            );
+      const categorized = preserveCategories
         ? {
-            allocations: p.allocations,
+            allocations: [...bankAllocations].map(([category, amount]) => ({
+              category,
+              amount,
+            })),
             needsClarification: false,
             question: '',
             itemCategories: [],
           }
-        : await this.model.structured(
-            categorization,
-            'Propose categories from the supplied category IDs and household context. Allocations are signed bank cents and must sum to the target total. Keep printed item facts separate from your category judgment. Mixed baskets require enough item arithmetic to justify exact splits; otherwise ask. Never invent prices or make a blanket mixed-merchant rule. For a mixed basket return one itemCategories entry for every item index (zero-based); code will compute exact split cents.',
-            {
-              purchase: this.purchaseView(p),
-              categories,
-              context: this.memory.context(p.merchant ?? '', null),
-              bankTotal: targets.reduce((n, t) => n + t.amount, 0),
-            },
-          );
+        : p.allocations.length
+          ? {
+              allocations: p.allocations,
+              needsClarification: false,
+              question: '',
+              itemCategories: [],
+            }
+          : await this.model.structured(
+              categorization,
+              'Propose categories from the supplied category IDs and household context. Allocations are signed bank cents and must sum to the target total. Keep printed item facts separate from your category judgment. Mixed baskets require enough item arithmetic to justify exact splits; otherwise ask. Never invent prices or make a blanket mixed-merchant rule. For a mixed basket return one itemCategories entry for every item index (zero-based); code will compute exact split cents.',
+              {
+                purchase: this.purchaseView(p),
+                categories,
+                context: this.memory.context(p.merchant ?? '', null),
+                bankTotal: targets.reduce((n, t) => n + t.amount, 0),
+              },
+            );
       if (!p.allocations.length && categorized.allocations.length === 1) {
         categorized.allocations[0]!.amount = targets.reduce(
           (n, t) => n + t.amount,
@@ -555,6 +615,7 @@ export class Engine {
         );
       }
       if (
+        !preserveCategories &&
         !p.allocations.length &&
         (categorized.allocations.length > 1 ||
           categorized.itemCategories.length > 0)
@@ -592,7 +653,9 @@ export class Engine {
       if (
         !categorized.allocations.length ||
         categorized.needsClarification ||
-        (targets.length > 1 && categorized.allocations.length !== 1)
+        (!preserveCategories &&
+          targets.length > 1 &&
+          categorized.allocations.length !== 1)
       ) {
         await this.writer.publish(key(job.id, 'clarify'), p, {
           ...p,
@@ -634,19 +697,21 @@ export class Engine {
       cp = {
         expected: targets,
         desired: targets.map((t) =>
-          this.writer.desired(
-            t,
-            targets.length > 1
-              ? [
-                  {
-                    category: categorized.allocations[0]!.category,
-                    amount: t.amount,
-                  },
-                ]
-              : categorized.allocations,
-            next,
-            detail,
-          ),
+          preserveCategories
+            ? { ...t, notes: withPurchaseNote(t.notes, next, detail) }
+            : this.writer.desired(
+                t,
+                targets.length > 1
+                  ? [
+                      {
+                        category: categorized.allocations[0]!.category,
+                        amount: t.amount,
+                      },
+                    ]
+                  : categorized.allocations,
+                next,
+                detail,
+              ),
         ),
         purchase: p,
         next,

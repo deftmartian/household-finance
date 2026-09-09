@@ -49,7 +49,7 @@ export const purchaseSchema = factsSchema.extend({
   schema: z.literal('purchase.v2'),
   id,
   revision: z.number().int().positive(),
-  state: z.enum(['pending', 'linked', 'attention', 'discarded']),
+  state: z.enum(['pending', 'linked', 'attention', 'recorded', 'discarded']),
   sources: z.array(sourceSchema).min(1).max(50),
   annotations: z
     .array(
