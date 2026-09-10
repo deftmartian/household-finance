@@ -553,3 +553,89 @@ it('resolves new evidence to the survivor of a consolidated duplicate', async ()
       .get(),
   ).toEqual({ n: 0 });
 });
+
+it('asks for clarification instead of stranding automatic categorization on an unknown category', async () => {
+  const f = setup([
+    {
+      allocations: [{ category: 'unknown-category', amount: -1575 }],
+      needsClarification: false,
+      question: '',
+    },
+  ]);
+  await f.engine.discover();
+  await f.engine.run(f.store.next()!);
+  expect(f.ledger.writes).toBe(0);
+  expect(
+    f.store.db
+      .prepare("SELECT count(*) AS n FROM jobs WHERE state='attention'")
+      .get(),
+  ).toEqual({ n: 0 });
+  expect(f.store.db.prepare('SELECT count(*) AS n FROM replies').get()).toEqual(
+    { n: 1 },
+  );
+});
+it('returns rejected allocation feedback so a conversation can correct its request', async () => {
+  const quote = 'Categorize this as food.';
+  const f = setup([
+    {
+      action: 'change_transaction',
+      arguments: JSON.stringify({
+        id: 'transaction-one',
+        allocations: [{ category: 'food', amount: 1575 }],
+        quote,
+      }),
+      reply: '',
+    },
+    {
+      action: 'change_transaction',
+      arguments: JSON.stringify({
+        id: 'transaction-one',
+        allocations: [{ category: 'food', amount: -1575 }],
+        quote,
+      }),
+      reply: '',
+    },
+    { action: 'answer', arguments: '{}', reply: 'Saved.' },
+  ]);
+  const m = message(quote);
+  f.store.intake(m, 'question', m);
+  await f.engine.run(f.store.next()!);
+  expect(f.ledger.writes).toBe(0);
+  await f.engine.run(f.store.next()!);
+  await f.engine.run(f.store.next()!);
+  const cp = JSON.parse(
+    (
+      f.store.db.prepare("SELECT checkpoint FROM jobs WHERE id='2'").get() as {
+        checkpoint: string;
+      }
+    ).checkpoint,
+  );
+  expect(cp.history[0].result.error).toBe('invalid-allocation');
+  expect(cp.done).toBe(true);
+  expect(f.ledger.writes).toBe(1);
+});
+it('distinguishes writable categorization work from uncategorized read-only accounts', async () => {
+  const f = setup([
+    { action: 'read_transactions', arguments: '{}', reply: '' },
+  ]);
+  f.ledger.rows.push({
+    ...transaction(),
+    id: 'investment-row',
+    account: 'investment',
+  });
+  const m = message('How much categorization remains?');
+  f.store.intake(m, 'question', m);
+  await f.engine.run(f.store.next()!);
+  const cp = JSON.parse(
+    (
+      f.store.db.prepare("SELECT checkpoint FROM jobs WHERE id='2'").get() as {
+        checkpoint: string;
+      }
+    ).checkpoint,
+  );
+  expect(cp.history[0].result).toMatchObject({
+    uncategorizedCount: 2,
+    writableUncategorizedCount: 1,
+    readOnlyUncategorizedCount: 1,
+  });
+});

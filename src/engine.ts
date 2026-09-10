@@ -89,7 +89,7 @@ Maintain durable context automatically: remember useful explicit statements with
 Return one action per response. arguments is JSON encoded as a string. Available actions:
 answer {} (reply contains the final household response); search_memory {query}; read_memory {id}; remember {topic,content,scope,certainty:'explicit'|'inferred',evidence:[{messageId,quote}],expiresAt:null|ISO timestamp}; revise {id,revision,value:<same memory object>}; consolidate {targets:[{id,revision}],value:<memory object preserving every source>}; forget {targets:[{id,revision}]}; search_history {query}; read_transactions {query:<merchant or note keywords only; empty string lists all>,start?:'YYYY-MM-DD',end?:'YYYY-MM-DD',uncategorized?:boolean,category?:category ID,offset?:nonnegative integer,limit?:1..50}; read_budget {month:'YYYY-MM'}; read_purchases {query:<merchant, item, or reference keywords only; empty string lists all>}; read_work {query} lists unfinished work; retry_work {id,quote:<exact retry request from current message>} resumes a failed item without discarding its checkpoints; change_transaction {id,allocations:[{category,amount}],quote:<exact authorizing text from current message>}; annotate_purchase {id,text,quote:<exact text from current message>}; resolve_purchase {id,transactionIds:[IDs] (empty when the bank import is still pending),allocations:[{category,amount}],quote}; correct_purchase {id,facts:<complete corrected purchase facts>,quote}; discard_purchase {id,quote}. These tools resolve the existing purchase; do not create a duplicate or silently drop it. A resolved match must identify the user's intended bank transactions. Keep purchase-purpose text on both canonical purchase and transaction notes.
 Search tools are available. Use uncategorized:true to filter transaction categorization; never put words such as uncategorized, transactions, or receipts into query unless they are literal text being sought. Empty search results mean no matching records, not a broken or unavailable search. Read total, availableCount, hasMore, and filters; broaden or correct an empty query rather than repeating the same search. History includes arguments so you can see what was already tried.
-Ledger amounts are signed integer cents; expense allocations sum to the signed bank amount. Read transactions before changing them. Never alter a transfer or starting balance. Memory source IDs refer to authenticated conversation messages. Resolve meaningful conflicts rather than erasing them. Readback-confirmed tool outcomes determine what actually happened. Do not claim a change succeeded before its tool reports success.`;
+Uncategorized totals across readable accounts include off-budget records; distinguish the writable-account categorization queue and exclude transfers and starting balances when reporting ordinary uncategorized work. Ledger amounts are signed integer cents; expense allocations sum to the signed bank amount. Read transactions before changing them. Never alter a transfer or starting balance. Memory source IDs refer to authenticated conversation messages. Resolve meaningful conflicts rather than erasing them. Readback-confirmed tool outcomes determine what actually happened. Do not claim a change succeeded before its tool reports success.`;
 
 export class Engine {
   readonly memory: MemoryStore;
@@ -765,7 +765,21 @@ export class Engine {
           );
       if (!rule && result.allocations.length === 1)
         result.allocations[0]!.amount = t.amount;
-      if (result.needsClarification || result.allocations.length !== 1) {
+      const categories = new Set(
+        (await this.ledger.categories()).map((c) => c.id),
+      );
+      const invalidCategory = result.allocations.some(
+        (a) =>
+          !categories.has(a.category) ||
+          (!rule &&
+            this.options.automaticCategories &&
+            !this.options.automaticCategories.has(a.category)),
+      );
+      if (
+        result.needsClarification ||
+        result.allocations.length !== 1 ||
+        invalidCategory
+      ) {
         this.store.queueReply(
           key(job.id, 'clarify'),
           '0',
@@ -775,19 +789,7 @@ export class Engine {
         this.store.finish(job.id);
         return;
       }
-      validateAllocations(
-        t.amount,
-        result.allocations,
-        new Set((await this.ledger.categories()).map((c) => c.id)),
-      );
-      if (
-        !rule &&
-        this.options.automaticCategories &&
-        result.allocations.some(
-          (a) => !this.options.automaticCategories!.has(a.category),
-        )
-      )
-        throw new Fault('automatic-category-not-allowed');
+      validateAllocations(t.amount, result.allocations, categories);
       cp = { desired: this.writer.desired(t, result.allocations) };
       this.store.checkpoint(job.id, cp);
     }
@@ -857,6 +859,15 @@ export class Engine {
           })),
           instruction:
             'Correct the arguments using the documented tool contract and retry.',
+        };
+      } else if (
+        error instanceof Fault &&
+        error.message === 'invalid-allocation'
+      ) {
+        result = {
+          error: 'invalid-allocation',
+          instruction:
+            'Read the current transaction and valid category IDs, then correct the allocation. Signed integer-cent allocations must sum exactly to the transaction amount. Do not claim the rejected change succeeded.',
         };
       } else if (error instanceof SyntaxError) {
         result = {
@@ -1028,6 +1039,14 @@ export class Engine {
         searchAvailable: true,
         availableCount: rows.length,
         uncategorizedCount: rows.filter(uncategorized).length,
+        uncategorizedCountScope:
+          'all readable accounts; excludes transfers and starting balances',
+        writableUncategorizedCount: rows.filter(
+          (t) => this.options.writeAccounts.has(t.account) && uncategorized(t),
+        ).length,
+        readOnlyUncategorizedCount: rows.filter(
+          (t) => !this.options.writeAccounts.has(t.account) && uncategorized(t),
+        ).length,
         filters: p,
         total: found.length,
         transactions,
