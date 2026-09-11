@@ -255,6 +255,124 @@ it('preserves differing evidence for the same order without replacing prior fact
   expect(saved.state).toBe('attention');
   expect(saved.evidence?.alternateRecords).toHaveLength(1);
   expect(f.ledger.writes).toBe(0);
+  const replies = f.store.db
+    .prepare('SELECT body FROM replies ORDER BY rowid')
+    .all() as Array<{ body: string }>;
+  expect(replies).toHaveLength(1);
+  expect(replies[0]!.body).toContain('15.75 CAD');
+  expect(replies[0]!.body).toContain('Which version should I use?');
+  expect(replies[0]!.body).not.toContain('bank transactions are available');
+});
+it('treats the same merchant reference on a different date and total as a new purchase', async () => {
+  const f = setup([
+    {
+      allocations: [{ category: 'food', amount: -48858 }],
+      needsClarification: false,
+      question: '',
+      itemCategories: [],
+    },
+  ]);
+  const old = purchase();
+  old.merchant = 'Costco';
+  old.reference = '111845433992';
+  old.date = '2026-09-01';
+  old.total = 53329;
+  f.ledger.seed(old);
+  f.ledger.rows = [
+    {
+      ...transaction(),
+      id: 'costco-aug12',
+      date: '2026-08-12',
+      amount: -48858,
+      merchant: 'Costco',
+      category: null,
+    },
+  ];
+  const facts = factsSchema.strip().parse(old);
+  facts.date = '2026-08-12';
+  facts.total = 48858;
+  facts.items = [
+    { description: 'Roti chicken', quantity: 1, unitPrice: 799, amount: 799 },
+  ];
+  f.engine.options.prepare = async () => ({
+    type: 'facts',
+    facts: [facts],
+    mediaType: 'application/pdf',
+  });
+  f.talk.archive.mockResolvedValue({
+    ...old.sources[0]!,
+    hash: 'b'.repeat(64),
+    url: 'https://cloud.example.test/aug12.pdf',
+    messageId: '2',
+  });
+  const incoming = message('');
+  incoming.attachments = [
+    { fileId: '123', etag: 'abc', size: 4, mediaType: 'application/pdf' },
+  ];
+  f.store.intake(incoming, 'attachment', incoming);
+  let job;
+  while ((job = f.store.next())) await f.engine.run(job);
+  const after = await f.ledger.purchases();
+  expect(after).toHaveLength(2);
+  expect(after.map((p) => p.date).sort()).toEqual(['2026-08-12', '2026-09-01']);
+  expect(after.find((p) => p.date === '2026-09-01')!.sources).toHaveLength(1);
+  expect(after.find((p) => p.date === '2026-08-12')!.state).toBe('linked');
+  expect(f.ledger.rows[0]!.category).toBe('food');
+  expect(f.ledger.rows[0]!.notes).toContain('Roti chicken');
+});
+it('gives a receipt follow-up the thread purchase including alternate versions', async () => {
+  const f = setup([
+    {
+      action: 'answer',
+      arguments: '{}',
+      reply: 'The Costco receipt is the August 12 bank charge.',
+    },
+  ]);
+  const old = purchase();
+  old.reference = 'ORDER-123';
+  old.id = 'existing-stable-purchase-id';
+  f.ledger.seed(old);
+  await f.engine.refresh();
+  const facts = factsSchema.strip().parse(old);
+  facts.items[0]!.description = 'Different printed item';
+  f.engine.options.prepare = async () => ({
+    type: 'facts',
+    facts: [facts],
+    mediaType: 'text/csv',
+  });
+  f.talk.archive.mockResolvedValue({
+    ...old.sources[0]!,
+    hash: 'b'.repeat(64),
+    messageId: '2',
+  });
+  const incoming = message('Updated receipt');
+  incoming.attachments = [
+    { fileId: '123', etag: 'abc', size: 4, mediaType: 'text/csv' },
+  ];
+  f.store.intake(incoming, 'attachment', incoming);
+  await f.engine.run(f.store.next()!);
+  const followUp = message(
+    "what do you mean? isn't this an uncategorized transaction in actual?",
+    '3',
+  );
+  followUp.parent = incoming.id;
+  f.store.intake(followUp, 'question', followUp);
+  await f.engine.run(f.store.next()!);
+  const payload = (
+    f.model.structured.mock.calls[0] as unknown as [
+      unknown,
+      unknown,
+      {
+        relatedPurchases: Array<{
+          merchant: string;
+          alternateVersions: Array<{ itemCount: number }>;
+        }>;
+      },
+    ]
+  )[2];
+  expect(payload.relatedPurchases).toHaveLength(1);
+  expect(payload.relatedPurchases[0]!.merchant).toBe('Example Market');
+  expect(payload.relatedPurchases[0]!.alternateVersions).toHaveLength(1);
 });
 it('uses bank cents for a single model-selected category', async () => {
   const f = setup([

@@ -204,6 +204,29 @@ export function withPurchaseNote(
   if (result.length > 32000) throw new Fault('transaction-note-too-large');
   return result;
 }
+export function sameRecordedPurchase(
+  existing: Purchase,
+  incoming: Purchase,
+): boolean {
+  if (existing.id === incoming.id) return true;
+  if (
+    incoming.reference === null ||
+    existing.reference !== incoming.reference ||
+    existing.currency !== incoming.currency ||
+    existing.merchant?.trim().toLowerCase() !==
+      incoming.merchant?.trim().toLowerCase()
+  )
+    return false;
+  if (incoming.date && existing.date && incoming.date !== existing.date)
+    return false;
+  if (
+    incoming.total !== null &&
+    existing.total !== null &&
+    incoming.total !== existing.total
+  )
+    return false;
+  return true;
+}
 export function matches(
   p: Purchase,
   transactions: Transaction[],
