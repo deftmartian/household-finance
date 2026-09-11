@@ -296,13 +296,18 @@ export function itemAllocations(
   )
     throw new Fault('item-allocation-evidence');
   const subtotal = p.items.reduce((n, i) => n + i.amount!, 0);
+  const extras = (p.tax ?? 0) + (p.tip ?? 0) + (p.shipping ?? 0);
+  const discount = p.discount ?? 0;
   const overhead =
-    (p.tax ?? 0) + (p.tip ?? 0) + (p.shipping ?? 0) - (p.discount ?? 0);
+    subtotal + extras === p.total
+      ? extras
+      : subtotal + extras - discount === p.total
+        ? extras - discount
+        : null;
   if (
     subtotal === 0 ||
-    subtotal + overhead !== p.total ||
-    (p.subtotal !== null && p.subtotal !== subtotal) ||
-    p.items.some((i) => Math.sign(i.amount!) !== Math.sign(subtotal))
+    overhead === null ||
+    (p.subtotal !== null && p.subtotal !== subtotal)
   )
     throw new Fault('item-allocation-evidence');
   const categories = new Map<string, number>();

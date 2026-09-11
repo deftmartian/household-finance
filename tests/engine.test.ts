@@ -95,6 +95,37 @@ it('computes split cents from item evidence and rejects missing prices', () => {
     'evidence',
   );
 });
+it('splits a receipt whose discounts are already in the item lines', () => {
+  const p = purchase();
+  p.items = [
+    { description: 'Milk', quantity: 1, unitPrice: 1000, amount: 1000 },
+    {
+      description: 'Instant savings',
+      quantity: 1,
+      unitPrice: null,
+      amount: -200,
+    },
+    { description: 'Notebook', quantity: 1, unitPrice: 500, amount: 500 },
+  ];
+  p.subtotal = 1300;
+  p.tax = 65;
+  p.discount = -200;
+  p.total = 1365;
+  expect(
+    itemAllocations(
+      p,
+      [
+        { index: 0, category: 'food' },
+        { index: 1, category: 'food' },
+        { index: 2, category: 'school' },
+      ],
+      new Set(['food', 'school']),
+    ),
+  ).toEqual([
+    { category: 'food', amount: -840 },
+    { category: 'school', amount: -525 },
+  ]);
+});
 it('updates purchase purpose in Actual and its readable transaction note', async () => {
   const f = setup([
     {
