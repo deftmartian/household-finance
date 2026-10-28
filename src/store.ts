@@ -109,8 +109,8 @@ export class Store {
           old.message !== input.message ||
           old.parent !== input.parent
         ) {
-          // Talk history shows the current text of an edited message. The
-          // original was already handled; an edit is not new work.
+          // History can differ from the webhook copy of a handled message:
+          // an edit, or reply context the webhook omitted. Not new work.
           if (!options.history) throw new Fault('message-identity-conflict');
           this.count('talk-history-edited');
         }
