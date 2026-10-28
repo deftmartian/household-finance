@@ -4,7 +4,9 @@ A self-hosted household assistant using Nextcloud Talk, an existing Actual Budge
 
 The assistant accepts text and receipt photos, PDFs, JSON, CSV, TSV, and XLSX. Known Amazon exports use deterministic extraction. Voice is unsupported and receives a request to send text without transcription or archiving.
 
-Purchase records live in namespaced Actual notes. Transactions show readable item details and preserve handwritten memos. Original files remain in Nextcloud. The application never provisions accounts, relinks banks, creates imported transactions, or changes balances. Existing Actual rules take precedence; ambiguous matches or unsupported split arithmetic require a conversational clarification.
+Purchase records live in namespaced Actual notes. Transactions show readable item details and preserve handwritten memos. Original files remain in Nextcloud. The application never provisions accounts, relinks banks, invents transactions, or changes balances. Existing Actual rules take precedence; ambiguous matches or unsupported split arithmetic require a conversational clarification.
+
+Every Saturday at 08:00 local time the assistant runs Actual's existing SimpleFIN sync. If any bank login has expired, it posts one message naming the banks, rechecks every four hours, and treats any reply to that message as the signal to continue. It then posts a weekly summary: spending by category, month-to-date budget, the largest purchases, receipts still waiting, and a numbered list of transactions that need a category. By Tuesday it sends the summary regardless, noting which bank data is stale. The summary uses no model call.
 
 Complete cash and zero-total purchases remain as recorded evidence without waiting for a bank match. Linking a receipt preserves existing bank categories and split memos. Pending matches are reconsidered when the ledger changes; an unrelated receipt does not block categorization. Additional source evidence updates both the canonical purchase and its linked transaction notes. Consolidated duplicate records remain preserved and redirect future evidence to their surviving purchase.
 

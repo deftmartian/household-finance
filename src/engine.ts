@@ -26,6 +26,25 @@ import type { Message, Talk } from './talk.js';
 import { prepare } from './prepare.js';
 import { sniff, MAX_FILE } from './documents.js';
 import type { Prepared } from './documents.js';
+import {
+  DEADLINE,
+  dueWeek,
+  nudgeText,
+  RECHECK,
+  shift,
+  staleBanks,
+  summaryText,
+} from './weekly.js';
+
+interface WeeklyCheckpoint {
+  saturday: string;
+  at: number;
+  nudged?: boolean;
+  nudge?: string;
+  go?: boolean;
+  syncedAt?: number;
+  stale?: string[];
+}
 
 const decisionSchema = z.strictObject({
   action: z.enum([
@@ -106,6 +125,7 @@ export class Engine {
       writeAccounts: Set<string>;
       currency: string;
       automaticCategories?: Set<string>;
+      timezone?: string;
       prepare?: (bytes: Buffer) => Promise<Prepared>;
     },
   ) {
@@ -124,6 +144,7 @@ export class Engine {
       else if (job.kind === 'attachment') await this.attachment(job);
       else if (job.kind === 'purchase') await this.purchase(job);
       else if (job.kind === 'categorize') await this.categorize(job);
+      else if (job.kind === 'weekly') await this.weekly(job);
       else throw new Fault('unknown-work-kind');
     } catch (error) {
       this.store.fail(job, error);
@@ -245,6 +266,93 @@ export class Engine {
       });
     }
     this.store.setMeta('purchase-scan-fingerprint', fingerprint);
+    this.scheduleWeekly();
+  }
+  private get timezone(): string {
+    return this.options.timezone ?? 'America/Halifax';
+  }
+  scheduleWeekly(now = Date.now()): void {
+    const week = dueWeek(now, this.timezone);
+    if (!week) return;
+    const cp: WeeklyCheckpoint = { saturday: week.saturday, at: week.at };
+    const id = key('weekly', week.saturday);
+    this.store.db.transaction(() => {
+      if (this.store.db.prepare('SELECT 1 FROM jobs WHERE id=?').get(id))
+        return;
+      this.store.enqueue(id, 'weekly', {
+        saturday: week.saturday,
+        messageId: '0',
+      });
+      this.store.checkpoint(id, cp);
+    })();
+  }
+  private wakeWeekly(message: Message): boolean {
+    if (!message.parent) return false;
+    const job = this.store.db
+      .prepare(
+        "SELECT j.id,j.checkpoint FROM jobs j JOIN replies r ON r.id=json_extract(j.checkpoint,'$.nudge') WHERE j.kind='weekly' AND j.state='ready' AND r.delivered=?",
+      )
+      .get(message.parent) as { id: string; checkpoint: string } | undefined;
+    if (!job) return false;
+    this.store.checkpoint(job.id, {
+      ...(JSON.parse(job.checkpoint) as WeeklyCheckpoint),
+      go: true,
+    });
+    this.store.db
+      .prepare('UPDATE jobs SET due=? WHERE id=?')
+      .run(Date.now(), job.id);
+    return true;
+  }
+  private async weekly(job: Job): Promise<void> {
+    const cp = JSON.parse(job.checkpoint) as WeeklyCheckpoint;
+    const later = (due: number) => {
+      this.store.checkpoint(job.id, cp);
+      this.store.db
+        .prepare("UPDATE jobs SET state='ready',attempts=0,due=? WHERE id=?")
+        .run(due, job.id);
+    };
+    const now = Date.now();
+    if (!cp.syncedAt) {
+      const stale = staleBanks(await this.ledger.bankSync());
+      if (stale.length && !cp.go && now < cp.at + DEADLINE) {
+        if (!cp.nudged) {
+          cp.nudge = key(job.id, 'nudge');
+          this.store.queueReply(cp.nudge, '0', nudgeText(stale));
+          cp.nudged = true;
+        }
+        later(Math.min(now + RECHECK, cp.at + DEADLINE));
+        return;
+      }
+      cp.stale = stale;
+      cp.syncedAt = now;
+      await this.discover();
+    }
+    // Let categorization and receipt matching settle on the new imports first.
+    const busy = this.store.db
+      .prepare(
+        "SELECT 1 FROM jobs WHERE state IN ('ready','running') AND kind IN ('categorize','purchase') AND due<=? LIMIT 1",
+      )
+      .get(now);
+    if (busy && now < cp.syncedAt + 1800000) {
+      later(now + 60000);
+      return;
+    }
+    const end = shift(cp.saturday, -1);
+    const start = shift(cp.saturday, -7);
+    const text = summaryText({
+      start,
+      end,
+      currency: this.options.currency,
+      accounts: this.options.writeAccounts,
+      transactions: await this.ledger.transactions(),
+      categories: await this.ledger.categories(),
+      budget: await this.ledger.budget(end.slice(0, 7)),
+      purchases: this.purchases(),
+      stale: cp.stale ?? [],
+    });
+    this.store.queueReply(key(job.id, 'summary'), '0', text);
+    this.store.checkpoint(job.id, cp);
+    this.store.finish(job.id);
   }
   private async attachment(job: Job): Promise<void> {
     const message = JSON.parse(job.payload) as Message;
@@ -803,6 +911,17 @@ export class Engine {
     cp.turn ??= 0;
     cp.history ??= [];
     if (cp.done) {
+      this.store.finish(job.id);
+      return;
+    }
+    if (!cp.turn && !cp.history.length && this.wakeWeekly(message)) {
+      this.store.queueReply(
+        key(job.id, 'answer'),
+        message.id,
+        'Thanks — I’ll check the banks now and send the weekly summary.',
+      );
+      cp.done = true;
+      this.store.checkpoint(job.id, cp);
       this.store.finish(job.id);
       return;
     }

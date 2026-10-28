@@ -1,6 +1,7 @@
 import type { Ledger } from '../src/actual.js';
 import { canonical, parsePurchase, PURCHASE_PREFIX } from '../src/domain.js';
 import type { Purchase, Transaction } from '../src/domain.js';
+import type { BankHealth, BudgetCategory } from '../src/weekly.js';
 export const transaction = (): Transaction => ({
   id: 'transaction-one',
   account: 'card',
@@ -100,6 +101,16 @@ export class FakeLedger implements Ledger {
   }
   async report() {
     return { available: 0 };
+  }
+  health: BankHealth[] = [];
+  bankSyncs = 0;
+  async bankSync() {
+    this.bankSyncs++;
+    return structuredClone(this.health);
+  }
+  budgetRows: BudgetCategory[] = [];
+  async budget() {
+    return structuredClone(this.budgetRows);
   }
   seed(p: Purchase) {
     this.notes.set(PURCHASE_PREFIX + p.id, canonical(p));

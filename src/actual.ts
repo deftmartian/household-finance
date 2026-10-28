@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import * as api from '@actual-app/api';
 import {
   canonical,
@@ -11,6 +12,7 @@ import {
 } from './domain.js';
 import type { Allocation, Purchase, Transaction } from './domain.js';
 import type { Store } from './store.js';
+import type { BankHealth, BudgetCategory } from './weekly.js';
 
 export interface Ledger {
   sync(): Promise<void>;
@@ -22,6 +24,38 @@ export interface Ledger {
   purchases(): Promise<Purchase[]>;
   report(month: string): Promise<unknown>;
   ruleCategory(t: Transaction): Promise<string | null>;
+  bankSync(): Promise<BankHealth[]>;
+  budget(month: string): Promise<BudgetCategory[]>;
+}
+const budgetMonthSchema = z.object({
+  categoryGroups: z.array(
+    z.object({
+      is_income: z.boolean().optional(),
+      hidden: z.boolean().optional(),
+      categories: z
+        .array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            hidden: z.boolean().optional(),
+            budgeted: z.number().optional(),
+            spent: z.number().optional(),
+            balance: z.number().optional(),
+          }),
+        )
+        .optional(),
+    }),
+  ),
+});
+interface AccountRow {
+  id: string;
+  name: string;
+  closed: number | boolean;
+  tombstone: number | boolean;
+  account_sync_source: string | null;
+  bankName: string | null;
+  last_sync: string | null;
+  bank_sync_status: string | null;
 }
 export class ActualLedger implements Ledger {
   constructor(
@@ -110,6 +144,57 @@ export class ActualLedger implements Ledger {
       }
     }
     return result;
+  }
+  async bankSync(): Promise<BankHealth[]> {
+    // The public runBankSync stops at the first failing account. The batch
+    // handler behind it imports every healthy account and records per-account
+    // status, so one expired login does not hide the rest.
+    const send = this.client.send as (
+      name: string,
+      args?: unknown,
+    ) => Promise<unknown>;
+    const linked = ((await send('accounts-get')) as AccountRow[]).filter(
+      (a) => a.account_sync_source === 'simpleFin' && !a.closed && !a.tombstone,
+    );
+    if (!linked.length) return [];
+    const started = Date.now();
+    try {
+      await send('simplefin-batch-sync', { ids: linked.map((a) => a.id) });
+      await this.sync();
+    } catch {
+      throw new Fault('bank-sync-failed', true);
+    }
+    const after = new Map(
+      ((await send('accounts-get')) as AccountRow[]).map((a) => [a.id, a]),
+    );
+    return linked.map((a) => {
+      const row = after.get(a.id);
+      const last = Number(row?.last_sync ?? 0);
+      return {
+        account: a.id,
+        name: a.name,
+        bank: a.bankName,
+        ok: last >= started - 60000 && (row?.bank_sync_status ?? 'ok') === 'ok',
+        lastSync: last ? new Date(last).toISOString() : null,
+      };
+    });
+  }
+  async budget(month: string): Promise<BudgetCategory[]> {
+    const result = budgetMonthSchema.parse(await api.getBudgetMonth(month));
+    return result.categoryGroups
+      .filter((g) => !g.hidden)
+      .flatMap((g) =>
+        (g.categories ?? [])
+          .filter((c) => !c.hidden)
+          .map((c) => ({
+            id: c.id,
+            name: c.name,
+            income: !!g.is_income,
+            budgeted: c.budgeted ?? 0,
+            spent: c.spent ?? 0,
+            balance: c.balance ?? 0,
+          })),
+      );
   }
   async note(id: string): Promise<string | null> {
     return (await api.getNote(id))?.note ?? null;

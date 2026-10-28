@@ -44,6 +44,7 @@ export async function main(): Promise<void> {
     writeAccounts: new Set(c.actual.writeAccounts),
     currency: c.currency,
     automaticCategories: new Set(c.actual.automaticCategories),
+    timezone: c.timezone,
   });
   await engine.refresh();
   let stopping = false,

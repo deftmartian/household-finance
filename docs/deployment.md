@@ -33,7 +33,7 @@ Back up the application database with SQLite's online backup API, and restore-te
 
 Health endpoints expose only aggregate work status. Check the image revision, one-writer lock, document namespace, authenticated Talk delivery, notes, preserved account/transaction/category/rule identities, and restart recovery. Keep model cost/latency and completed-work counters for comparison against the predecessor.
 
-The normal bank import remains manual/weekly. A subsequent real import must match a waiting receipt without new extraction or operator repair. Measure at least 50% lower model cost on a comparable workload, including memory work; do not substitute synthetic orchestration checks for extraction quality or claim savings from fewer containers alone.
+The assistant runs Actual's SimpleFIN sync weekly (Saturday 08:00 local) and asks the household to refresh expired bank logins; manual syncs in Actual remain normal. A subsequent real import must match a waiting receipt without new extraction or operator repair. Measure at least 50% lower model cost on a comparable workload, including memory work; do not substitute synthetic orchestration checks for extraction quality or claim savings from fewer containers alone.
 
 ## Document sandbox policy
 
