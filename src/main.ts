@@ -7,7 +7,7 @@ import { Store } from './store.js';
 import { ActualLedger } from './actual.js';
 import { Model } from './model.js';
 import { Engine } from './engine.js';
-import { Talk, webhook, fromHistory } from './talk.js';
+import { Talk, webhook, ingestHistory } from './talk.js';
 import { Fault } from './domain.js';
 import { metrics } from './metrics.js';
 
@@ -138,20 +138,7 @@ export async function main(): Promise<void> {
           store.setMeta('talk-backfill-error', new Date().toISOString());
           return [];
         });
-        store.db.transaction(() => {
-          for (const row of [...rows].sort(
-            (a, b) => Number(a.id) - Number(b.id),
-          )) {
-            const message = fromHistory(row, talk.config);
-            if (message)
-              store.intake(
-                message,
-                message.attachments.length ? 'attachment' : 'question',
-                message,
-              );
-            store.setMeta('talk-cursor', row.id);
-          }
-        })();
+        ingestHistory(store, rows, talk.config);
         lastBackfill = Date.now();
       }
       const job = store.next();

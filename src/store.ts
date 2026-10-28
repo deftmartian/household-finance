@@ -97,6 +97,7 @@ export class Store {
     },
     kind: string,
     payload: unknown,
+    options: { history?: boolean; enqueue?: boolean } = {},
   ): boolean {
     return this.db.transaction(() => {
       const old = this.db
@@ -107,16 +108,23 @@ export class Store {
           old.speaker !== input.speaker ||
           old.message !== input.message ||
           old.parent !== input.parent
-        )
-          throw new Fault('message-identity-conflict');
+        ) {
+          // Talk history shows the current text of an edited message. The
+          // original was already handled; an edit is not new work.
+          if (!options.history) throw new Fault('message-identity-conflict');
+          this.count('talk-history-edited');
+        }
         return false;
       }
       this.db
         .prepare('INSERT INTO inbox VALUES(@id,@speaker,@message,@parent,@at)')
         .run(input);
-      this.enqueue(input.id, kind, payload);
+      if (options.enqueue ?? true) this.enqueue(input.id, kind, payload);
       return true;
     })();
+  }
+  count(name: string): void {
+    this.setMeta(name, String(Number(this.getMeta(name) ?? 0) + 1));
   }
   enqueue(id: string, kind: string, payload: unknown, due = Date.now()): void {
     const serialized = canonical(payload);

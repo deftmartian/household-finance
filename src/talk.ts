@@ -10,6 +10,7 @@ import { Fault, key } from './domain.js';
 import type { Source } from './domain.js';
 import { MAX_FILE, sniff } from './documents.js';
 import { readBytes, request } from './http-client.js';
+import type { Store } from './store.js';
 
 export interface TalkConfig {
   url: string;
@@ -185,6 +186,40 @@ export function fromHistory(
     at: new Date((row.timestamp ?? Date.now() / 1000) * 1000).toISOString(),
     attachments: attachmentsFrom(row.messageParameters),
   };
+}
+// A text message the webhook missed is stored but not answered this late.
+const LATE_TEXT = 86400000;
+export function ingestHistory(
+  store: Store,
+  rows: ChatMessage[],
+  config: TalkConfig,
+  now = Date.now(),
+): void {
+  store.db.transaction(() => {
+    for (const row of [...rows].sort((a, b) => Number(a.id) - Number(b.id))) {
+      let message: Message | null = null;
+      try {
+        message = fromHistory(row, config);
+      } catch (error) {
+        if (error instanceof Fault && error.code === 'talk-history-room')
+          throw error;
+        // One unreadable message must not hold the cursor forever.
+        store.count('talk-history-unreadable');
+      }
+      if (message) {
+        const late =
+          !message.attachments.length &&
+          Date.parse(message.at) < now - LATE_TEXT;
+        store.intake(
+          message,
+          message.attachments.length ? 'attachment' : 'question',
+          message,
+          { history: true, enqueue: !late },
+        );
+      }
+      store.setMeta('talk-cursor', row.id);
+    }
+  })();
 }
 export class Talk {
   private readonly authorization: string;
