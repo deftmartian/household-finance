@@ -7,7 +7,7 @@ import type { Message } from '../src/talk.js';
 import { dueWeek, summaryText } from '../src/weekly.js';
 import { FakeLedger, purchase, transaction } from './fixtures.js';
 
-const SATURDAY = Date.parse('2026-09-05T11:00:00Z'); // 08:00 in Halifax
+const SATURDAY = Date.parse('2026-09-05T12:00:00Z'); // 09:00 in Halifax
 const stores: Store[] = [];
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -74,7 +74,7 @@ const reply = (parent: string): Message => ({
   attachments: [],
 });
 
-it('runs from Saturday 08:00 local and never far behind', () => {
+it('runs from Saturday 09:00 local and never far behind', () => {
   const tz = 'America/Halifax';
   expect(dueWeek(SATURDAY - 1, tz)).toBeNull();
   expect(dueWeek(SATURDAY, tz)).toEqual({

@@ -17,8 +17,8 @@ export interface BudgetCategory {
 }
 
 const DAY = 86400000;
-// Saturday 08:00 local. A missed run is not started more than three days late.
-const HOUR = 8,
+// Saturday 09:00 local. A missed run is not started more than three days late.
+const HOUR = 9,
   LATEST = 3 * DAY;
 export const RECHECK = 4 * 3600000;
 export const DEADLINE = 3 * DAY;
