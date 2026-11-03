@@ -66,15 +66,28 @@ jobs:
 
   publish:
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'andrew'
     runs-on: trixie-docker
     timeout-minutes: 30
     env:
       BAO_ADDR: https://bao.bargen.ca
     steps:
+      # Forgejo skips a job-level `if` on a job with `needs` even when it is
+      # true (seen 2026-11-03 in docker-certbot-dns-ionos), so the gate is
+      # this step; every later step requires RELEASE=1. OpenBao's
+      # publish-household-finance role enforces the same rule independently.
+      - name: Only pushes to main by andrew publish
+        run: |
+          if [ "${{ github.event_name }}" = push ] && [ "${{ github.ref }}" = refs/heads/main ] && [ "${{ github.actor }}" = andrew ]; then
+            echo "RELEASE=1" >> "$GITHUB_ENV"
+          else
+            echo "Not a push to main by andrew: nothing to publish."
+          fi
+
       - uses: actions/checkout@v4
+        if: env.RELEASE == '1'
 
       - name: GHCR token from OpenBao (role publish-household-finance)
+        if: env.RELEASE == '1'
         run: |
           set -euo pipefail
           jwt=$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
@@ -90,12 +103,14 @@ jobs:
           echo "GHCR_TOKEN=${ghcr}" >> "$GITHUB_ENV"
 
       - name: Log in to both registries
+        if: env.RELEASE == '1'
         run: |
           set -euo pipefail
           echo "${{ secrets.REGISTRY_TOKEN }}" | docker login git.deftmartian.dev -u "${{ vars.REGISTRY_USER }}" --password-stdin
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u deftmartian --password-stdin
 
       - name: Build and publish household-finance-bot (commit and latest)
+        if: env.RELEASE == '1'
         run: |
           set -euo pipefail
           docker buildx inspect finance-builder >/dev/null 2>&1 || docker buildx create --name finance-builder --driver docker-container >/dev/null
