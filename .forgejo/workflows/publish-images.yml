@@ -1,0 +1,131 @@
+name: Publish container images
+
+# Forgejo is primary; GitHub is a push mirror with Actions off.
+# Every push and PR: pnpm verify, build the runtime image, and run the
+# container hardening probe (no capabilities, no-new-privileges, the custom
+# seccomp profile, read-only root). The probe runs AppArmor-unconfined, like
+# production: snail uses SELinux, and the runner's Debian 13 AppArmor 4
+# docker-default profile denies the sandbox's user namespace (userns_create).
+# A push to main by andrew then publishes household-finance-bot, tagged with
+# the commit and `latest`, to both registries:
+#   git.deftmartian.dev/deftmartian/household-finance-bot  (household-finance-deploy pulls :latest)
+#   ghcr.io/deftmartian/household-finance-bot              (public)
+# The GHCR token comes from OpenBao (role publish-household-finance: a push by
+# andrew to main of this repository only).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+enable-openid-connect: true
+
+concurrency:
+  group: publish-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORGEJO_IMAGE: git.deftmartian.dev/deftmartian/household-finance-bot
+  GHCR_IMAGE: ghcr.io/deftmartian/household-finance-bot
+
+jobs:
+  verify:
+    runs-on: trixie-docker # the VM's Docker daemon builds and runs the image
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: pnpm, at the version package.json pins
+        run: corepack enable
+
+      - name: Install dependencies
+        # Store outside the checkout: on a different filesystem pnpm would put
+        # .pnpm-store in the workspace, and format:check would then scan it.
+        run: pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store
+
+      - name: Verify application
+        run: pnpm verify
+
+      - name: Build the runtime image
+        run: docker build --pull --target finance-runtime --build-arg SOURCE_REVISION="${GITHUB_SHA}" -t "finance-test:${GITHUB_SHA}" .
+
+      - name: Container hardening probe (inside a helper container on the VM's daemon)
+        # The job's own files aren't visible to the VM's daemon, so the
+        # checkout is copied into a helper container whose working directory
+        # and TMPDIR are a VM path; the probe's bind mounts then resolve.
+        run: |
+          set -euo pipefail
+          d="/tmp/finance-probe-${GITHUB_RUN_ID:-$$}"
+          helper=$(docker run -d -v /var/run/docker.sock:/var/run/docker.sock -v "$d:$d" -e TMPDIR="$d" -w "$d/src" \
+                   git.deftmartian.dev/deftmartian/ci-docker:trixie sleep 600)
+          trap 'docker rm -f "$helper" >/dev/null 2>&1 || true; docker run --rm -v /tmp:/host-tmp alpine:3.22 rm -rf "/host-tmp/${d#/tmp/}"' EXIT
+          docker exec "$helper" mkdir -p "$d/src"
+          docker cp . "$helper:$d/src"
+          docker exec -e FINANCE_APPARMOR_PROFILE=unconfined "$helper" bash scripts/verify-container.sh "finance-test:${GITHUB_SHA}"
+
+  publish:
+    needs: verify
+    runs-on: trixie-docker
+    timeout-minutes: 30
+    env:
+      BAO_ADDR: https://bao.bargen.ca
+    steps:
+      # Forgejo skips a job-level `if` on a job with `needs` even when it is
+      # true (seen 2026-11-03 in docker-certbot-dns-ionos), so the gate is
+      # this step; every later step requires RELEASE=1. OpenBao's
+      # publish-household-finance role enforces the same rule independently.
+      - name: Only pushes to main by andrew publish
+        run: |
+          if [ "${{ github.event_name }}" = push ] && [ "${{ github.ref }}" = refs/heads/main ] && [ "${{ github.actor }}" = andrew ]; then
+            echo "RELEASE=1" >> "$GITHUB_ENV"
+          else
+            echo "Not a push to main by andrew: nothing to publish."
+          fi
+
+      - uses: actions/checkout@v4
+        if: env.RELEASE == '1'
+
+      - name: GHCR token from OpenBao (role publish-household-finance)
+        if: env.RELEASE == '1'
+        run: |
+          set -euo pipefail
+          jwt=$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+                "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://bao.bargen.ca" \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+          token=$(python3 -c 'import json,sys; print(json.dumps({"role": "publish-household-finance", "jwt": sys.argv[1]}))' "$jwt" \
+                  | curl -sS -X POST --data @- "${BAO_ADDR}/v1/auth/forgejo/login" \
+                  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["auth"]["client_token"]) if d.get("auth") else sys.exit("OpenBao refused the login: " + "; ".join(d.get("errors", [])))')
+          echo "::add-mask::${token}"
+          ghcr=$(curl -fsS -H "X-Vault-Token: ${token}" "${BAO_ADDR}/v1/secret/data/github/ghcr-push-token" \
+                 | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["data"]["token"])')
+          echo "::add-mask::${ghcr}"
+          echo "GHCR_TOKEN=${ghcr}" >> "$GITHUB_ENV"
+
+      - name: Log in to both registries
+        if: env.RELEASE == '1'
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.REGISTRY_TOKEN }}" | docker login git.deftmartian.dev -u "${{ vars.REGISTRY_USER }}" --password-stdin
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u deftmartian --password-stdin
+
+      - name: Build and publish household-finance-bot (commit and latest)
+        if: env.RELEASE == '1'
+        run: |
+          set -euo pipefail
+          docker buildx inspect finance-builder >/dev/null 2>&1 || docker buildx create --name finance-builder --driver docker-container >/dev/null
+          docker buildx build --builder finance-builder --push --target finance-runtime \
+            --build-arg SOURCE_REVISION="${GITHUB_SHA}" --platform linux/amd64 \
+            --provenance=mode=max --sbom=true \
+            --label org.opencontainers.image.source=https://github.com/deftmartian/household-finance \
+            --label org.opencontainers.image.revision="${GITHUB_SHA}" \
+            -t "${FORGEJO_IMAGE}:${GITHUB_SHA}" -t "${FORGEJO_IMAGE}:latest" \
+            -t "${GHCR_IMAGE}:${GITHUB_SHA}" -t "${GHCR_IMAGE}:latest" .
+          for image in "$FORGEJO_IMAGE" "$GHCR_IMAGE"; do
+            printf -- '- `%s@%s`\n' "$image:${GITHUB_SHA}" "$(docker buildx imagetools inspect "$image:${GITHUB_SHA}" --format '{{json .Manifest.Digest}}' | tr -d '"')" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Log out
+        if: always()
+        run: docker logout git.deftmartian.dev || true; docker logout ghcr.io || true
