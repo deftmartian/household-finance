@@ -40,7 +40,9 @@ jobs:
         run: corepack enable
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # Store outside the checkout: on a different filesystem pnpm would put
+        # .pnpm-store in the workspace, and format:check would then scan it.
+        run: pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store
 
       - name: Verify application
         run: pnpm verify
