@@ -3,8 +3,9 @@ name: Publish container images
 # Forgejo is primary; GitHub is a push mirror with Actions off.
 # Every push and PR: pnpm verify, build the runtime image, and run the
 # container hardening probe (no capabilities, no-new-privileges, the custom
-# seccomp profile, read-only root). The AppArmor variant of the probe is
-# GitHub-Ubuntu-specific and is not run here (snail uses SELinux).
+# seccomp profile, read-only root). The probe runs AppArmor-unconfined, like
+# production: snail uses SELinux, and the runner's Debian 13 AppArmor 4
+# docker-default profile denies the sandbox's user namespace (userns_create).
 # A push to main by andrew then publishes household-finance-bot, tagged with
 # the commit and `latest`, to both registries:
 #   git.deftmartian.dev/deftmartian/household-finance-bot  (household-finance-deploy pulls :latest)
@@ -62,7 +63,7 @@ jobs:
           trap 'docker rm -f "$helper" >/dev/null 2>&1 || true; docker run --rm -v /tmp:/host-tmp alpine:3.22 rm -rf "/host-tmp/${d#/tmp/}"' EXIT
           docker exec "$helper" mkdir -p "$d/src"
           docker cp . "$helper:$d/src"
-          docker exec "$helper" bash scripts/verify-container.sh "finance-test:${GITHUB_SHA}"
+          docker exec -e FINANCE_APPARMOR_PROFILE=unconfined "$helper" bash scripts/verify-container.sh "finance-test:${GITHUB_SHA}"
 
   publish:
     needs: verify
