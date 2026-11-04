@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>deftmartian/renovate"],
+  "packageRules": [
+    {
+      "description": "Actual's API client and server must move together: one PR for both. household-finance and household-finance-deploy use the same group name.",
+      "matchPackageNames": ["@actual-app/api", "actualbudget/actual-server"],
+      "groupName": "actual-budget"
+    }
+  ]
+}
