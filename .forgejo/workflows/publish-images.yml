@@ -35,7 +35,7 @@ jobs:
     runs-on: trixie-docker # the VM's Docker daemon builds and runs the image
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: pnpm, at the version package.json pins
         run: corepack enable
@@ -84,7 +84,7 @@ jobs:
             echo "Not a push to main by andrew: nothing to publish."
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: env.RELEASE == '1'
 
       - name: GHCR token from OpenBao (role publish-household-finance)
