@@ -24,7 +24,8 @@ enable-openid-connect: true
 
 concurrency:
   group: publish-images-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer push to a PR cancels the run it replaces; a publish from main always finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORGEJO_IMAGE: git.deftmartian.dev/deftmartian/household-finance-bot
