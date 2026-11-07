@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { z } from 'zod';
 import { Store } from '../src/store.js';
 import { Engine } from '../src/engine.js';
@@ -12,7 +12,17 @@ import {
 import { FakeLedger, purchase, transaction } from './fixtures.js';
 import type { Message } from '../src/talk.js';
 const stores: Store[] = [];
+// Every engine tick schedules the weekly summary from the real clock. From Saturday 09:00 to Tuesday 09:00 local
+// (weekly.ts: a missed run starts up to three days late) that queued a real weekly job inside these tests, which
+// took model and Talk calls the assertions count: the suite failed every weekend (found 2026-11-07). Pin the clock
+// to a Wednesday outside that window; weekly.test.ts covers the schedule itself.
+const WEDNESDAY = Date.parse('2026-11-04T15:00:00Z');
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(WEDNESDAY);
+});
 afterEach(() => {
+  vi.useRealTimers();
   for (const s of stores.splice(0)) s.close();
 });
 function setup(responses: unknown[] = []) {
