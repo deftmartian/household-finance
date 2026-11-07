@@ -38,8 +38,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: pnpm, at the version package.json pins
-        run: corepack enable
+      # pnpm's recommended CI setup (pnpm.io/continuous-integration): installs pnpm at the version package.json's
+      # packageManager pins (signature-checked native binary) plus Node.js. data.forgejo.org mirrors pnpm/setup.
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
+        with:
+          runtime: node@24
+          install: false
 
       - name: Install dependencies
         # Store outside the checkout: on a different filesystem pnpm would put
