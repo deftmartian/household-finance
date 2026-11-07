@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: pnpm, at the version package.json pins
-        run: corepack enable
+        run: npm install -g "$(node -p 'require("./package.json").packageManager')"
 
       - name: Install dependencies
         # Store outside the checkout: on a different filesystem pnpm would put
