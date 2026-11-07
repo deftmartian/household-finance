@@ -73,10 +73,11 @@ jobs:
     env:
       BAO_ADDR: https://bao.bargen.ca
     steps:
-      # Forgejo skips a job-level `if` on a job with `needs` even when it is
-      # true (seen 2026-11-03 in docker-certbot-dns-ionos), so the gate is
-      # this step; every later step requires RELEASE=1. OpenBao's
-      # publish-household-finance role enforces the same rule independently.
+      # In a job-level `if` on a job with `needs`, Forgejo's github.actor doesn't
+      # hold the real user, so an actor check there always skips the job. Steps
+      # see the right actor, so the gate is this step; every later step requires
+      # RELEASE=1. OpenBao's publish-household-finance role enforces the same
+      # rule independently.
       - name: Only pushes to main by andrew publish
         run: |
           if [ "${{ github.event_name }}" = push ] && [ "${{ github.ref }}" = refs/heads/main ] && [ "${{ github.actor }}" = andrew ]; then
