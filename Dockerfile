@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends g++ make python3 && rm -rf /var/lib/apt/lists/*
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -9,7 +9,7 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN pnpm build && pnpm prune --prod
 
-FROM node:24-bookworm-slim AS finance-runtime
+FROM node:26-bookworm-slim AS finance-runtime
 ARG SOURCE_REVISION=development
 ENV NODE_ENV=production SOURCE_REVISION=${SOURCE_REVISION} FINANCE_CONFIG=/run/secrets/finance_config
 WORKDIR /app
