@@ -170,8 +170,8 @@ importers:
   .:
     dependencies:
       '@actual-app/api':
-        specifier: 26.10.0
-        version: 26.10.0
+        specifier: 26.11.0
+        version: 26.11.0
       better-sqlite3:
         specifier: 13.0.3
         version: 13.0.3
@@ -218,15 +218,15 @@ importers:
 
 packages:
 
-  '@actual-app/api@26.10.0':
-    resolution: {integrity: sha512-yVpl37aXJ6kikV5wljRgedji5NQ0lQNhCUfoBOpDvxrxVfKpPuUdAbq94k4GvF53kf4r1E4h7yjonDoxdVcumA==}
+  '@actual-app/api@26.11.0':
+    resolution: {integrity: sha512-pDBwnbbZfEW0lh0NuiwsLLHSzgclHzRTUywN2P9DKnczNidqUIRoK39fRc4czerCToohuAj/tP+S344irhhKEA==}
     engines: {node: '>=22'}
 
-  '@actual-app/core@26.10.0':
-    resolution: {integrity: sha512-uhBeqN+xs+cKAtChfW78TXp7/cQFtwLy+etikPAU0v4Q8k/N/x/OkKGJCnXwnQBNzVffVeLpR+TO21LWeFujTA==}
+  '@actual-app/core@26.11.0':
+    resolution: {integrity: sha512-4+Io7GJJ/TTSCF5nTUKqYy3BqYV8W0eR159d3A0Q1mxpsrBjSDlokiGruoDeuI6V8lDyoccL2+RhH9CLlR6owQ==}
 
-  '@actual-app/crdt@3.1.3':
-    resolution: {integrity: sha512-3BfVYYasM7uAhIOTQIzMFpIAB6H+0CQhlQMvN+nLHbgWvEVZzpwynoFBSq7pXLX0xAlG3TFnjlBp47URNkeDwQ==}
+  '@actual-app/crdt@3.1.4':
+    resolution: {integrity: sha512-YSNj7kpTHCtJsxsQEks+IfyQOLYBXb4Xjs1Wm8KhSa4DOAcxySrEoFSZS+8h9v46SwMK9wtPfor43pvbaVfrEw==}
 
   '@bufbuild/protobuf@2.16.0':
     resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
@@ -1070,8 +1070,8 @@ packages:
   hookified@2.2.0:
     resolution: {integrity: sha512-p/LgFzRN5FeoD3DLS6bkUapeye6E4SI6yJs6KetENd18S+FBthqYq2amJUWpt5z0EQwwHemidjY5OqJGEKm5uA==}
 
-  hyperformula@3.4.0:
-    resolution: {integrity: sha512-w1N11JWfdHedHpNoSgYBd3Mz7e1yr1BEQ+g4GFJbLv+qlYVXyC4I8xy1mSwj13FhcoDBGNU5yxPCdXB6vwaYaA==}
+  hyperformula@3.5.0:
+    resolution: {integrity: sha512-wV0IpiVEG1L36UGUR2vAROEWNVgOQDlTUyZTL67v75JuzSWh0ANEONuoKqdhHdhd94Uo2A1EVk9q8LZabYNDkw==}
 
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
@@ -1399,8 +1399,8 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
-  uuid@14.0.2:
-    resolution: {integrity: sha512-xZe/16rV4aa+HGSOCiY2YeLT1OybRLrrkL/Rqaq7p7GMVXjFh+6wN4oMYgjFmnSnhY8t6Xpdl2l9qmnHYuMHwQ==}
+  uuid@14.0.3:
+    resolution: {integrity: sha512-Sc5u1VVln93y1Xnz4R+CunOZc7R9LUcTmhj7Rc7Eg3HVcf7rVn2FOoa812fe0W8p3jD7xeoGSYbfqCGGH2B6xw==}
     hasBin: true
 
   vite@8.1.5:
@@ -1525,15 +1525,15 @@ packages:
 
 snapshots:
 
-  '@actual-app/api@26.10.0':
+  '@actual-app/api@26.11.0':
     dependencies:
-      '@actual-app/core': 26.10.0
-      '@actual-app/crdt': 3.1.3
+      '@actual-app/core': 26.11.0
+      '@actual-app/crdt': 3.1.4
       better-sqlite3: 13.0.3
       compare-versions: 6.1.1
-      uuid: 14.0.2
+      uuid: 14.0.3
 
-  '@actual-app/core@26.10.0':
+  '@actual-app/core@26.11.0':
     dependencies:
       '@jlongster/sql.js': 1.6.7
       '@rschedule/core': 1.5.0
@@ -1546,17 +1546,17 @@ snapshots:
       es-toolkit: 1.52.0
       fflate: 0.8.3
       handlebars: 4.7.10
-      hyperformula: 3.4.0
+      hyperformula: 3.5.0
       lru-cache: 11.5.3
       mitt: 3.0.1
-      uuid: 14.0.2
+      uuid: 14.0.3
       xml2js: 0.6.2
 
-  '@actual-app/crdt@3.1.3':
+  '@actual-app/crdt@3.1.4':
     dependencies:
       '@bufbuild/protobuf': 2.16.0
       murmurhash: 2.0.1
-      uuid: 14.0.2
+      uuid: 14.0.3
 
   '@bufbuild/protobuf@2.16.0': {}
 
@@ -2281,7 +2281,7 @@ snapshots:
 
   hookified@2.2.0: {}
 
-  hyperformula@3.4.0:
+  hyperformula@3.5.0:
     dependencies:
       chevrotain: 6.5.0
       tiny-emitter: 2.1.0
@@ -2572,7 +2572,7 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  uuid@14.0.2: {}
+  uuid@14.0.3: {}
 
   vite@8.1.5(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15):
     dependencies:
