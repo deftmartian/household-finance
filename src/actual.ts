@@ -25,7 +25,17 @@ export interface Ledger {
   report(month: string): Promise<unknown>;
   ruleCategory(t: Transaction): Promise<string | null>;
   bankSync(): Promise<BankHealth[]>;
+  // Read-only views for operator sessions; none of these sync.
+  banks(): Promise<BankHealth[]>;
+  accountNames(): Promise<Map<string, string>>;
+  rules(): Promise<LedgerRule[]>;
+  createRule(importedMerchant: string, category: string): Promise<void>;
   budget(month: string): Promise<BudgetCategory[]>;
+}
+export interface LedgerRule {
+  conditionsOp: string;
+  conditions: Array<{ field: string; op: string; value: unknown }>;
+  actions: Array<{ field?: string; op: string; value?: unknown }>;
 }
 const budgetMonthSchema = z.object({
   categoryGroups: z.array(
@@ -144,6 +154,43 @@ export class ActualLedger implements Ledger {
       }
     }
     return result;
+  }
+  private async accountRows(): Promise<AccountRow[]> {
+    const send = this.client.send as (name: string) => Promise<unknown>;
+    return (await send('accounts-get')) as AccountRow[];
+  }
+  async banks(): Promise<BankHealth[]> {
+    return (await this.accountRows())
+      .filter(
+        (a) =>
+          a.account_sync_source === 'simpleFin' && !a.closed && !a.tombstone,
+      )
+      .map((a) => ({
+        account: a.id,
+        name: a.name,
+        bank: a.bankName,
+        ok: (a.bank_sync_status ?? 'ok') === 'ok',
+        lastSync: a.last_sync
+          ? new Date(Number(a.last_sync)).toISOString()
+          : null,
+      }));
+  }
+  async accountNames(): Promise<Map<string, string>> {
+    return new Map((await api.getAccounts()).map((a) => [a.id, a.name]));
+  }
+  async rules(): Promise<LedgerRule[]> {
+    return (await api.getRules()) as LedgerRule[];
+  }
+  async createRule(importedMerchant: string, category: string): Promise<void> {
+    await api.createRule({
+      stage: null,
+      conditionsOp: 'and',
+      conditions: [
+        { field: 'imported_payee', op: 'is', value: importedMerchant },
+      ],
+      actions: [{ op: 'set', field: 'category', value: category }],
+    });
+    await this.sync();
   }
   async bankSync(): Promise<BankHealth[]> {
     // The public runBankSync stops at the first failing account. The batch

@@ -112,6 +112,11 @@ answer {} (reply contains the final household response); search_memory {query}; 
 Search tools are available. Use uncategorized:true to filter transaction categorization; never put words such as uncategorized, transactions, or receipts into query unless they are literal text being sought. Empty search results mean no matching records, not a broken or unavailable search. Read total, availableCount, hasMore, and filters; broaden or correct an empty query rather than repeating the same search. History includes arguments so you can see what was already tried. relatedPurchases and purchase alternateVersions are evidence for the current thread, including a receipt that was just sent; use them before concluding the file contents are unavailable. A receipt queue and an uncategorized bank queue are separate; search both when the user points at a bank line.
 Uncategorized totals across readable accounts include off-budget records; distinguish the writable-account categorization queue and exclude transfers and starting balances when reporting ordinary uncategorized work. Ledger amounts are signed integer cents; expense allocations sum to the signed bank amount. Read transactions before changing them. Never alter a transfer or starting balance. Memory source IDs refer to authenticated conversation messages. Resolve meaningful conflicts rather than erasing them. Readback-confirmed tool outcomes determine what actually happened. Do not claim a change succeeded before its tool reports success.`;
 
+const hasFacts = (p: Purchase) => p.total !== null && p.date !== null;
+const CAPTURED = 'Saved. It will be matched at the next review.';
+const CAPTURE_ONLY =
+  'I only collect receipts now. Send a photo or PDF; questions are handled at the next review.';
+
 export class Engine {
   readonly memory: MemoryStore;
   readonly writer: Writer;
@@ -126,6 +131,8 @@ export class Engine {
       currency: string;
       automaticCategories?: Set<string>;
       timezone?: string;
+      // No model: attachments are archived and stored without extraction.
+      capture?: boolean;
       prepare?: (bytes: Buffer) => Promise<Prepared>;
     },
   ) {
@@ -244,7 +251,7 @@ export class Engine {
         this.store.db
           .prepare("UPDATE jobs SET state='ready',due=?,attempts=0 WHERE id=?")
           .run(Date.now(), jobId);
-      else if (!existing)
+      else if (!existing && !(this.options.capture && !hasFacts(p)))
         this.store.enqueue(jobId, 'purchase', {
           purchaseId: p.id,
           messageId: p.sources[0]!.messageId,
@@ -259,7 +266,7 @@ export class Engine {
         !t.category &&
         !t.children.length,
     )) {
-      if (pendingMatches.includes(t.id)) continue;
+      if (this.options.capture || pendingMatches.includes(t.id)) continue;
       this.store.enqueue(key('categorize', t.id, hash(t)), 'categorize', {
         transaction: t,
         messageId: '0',
@@ -392,11 +399,13 @@ export class Engine {
         try {
           if (!sniff(bytes).startsWith('image/'))
             throw new Fault('photo-content-mismatch');
-          const prepared = await (this.options.prepare ?? prepare)(bytes);
-          if (prepared.type !== 'images' || !prepared.images)
-            throw new Fault('photo-content-mismatch');
+          if (!this.options.capture) {
+            const prepared = await (this.options.prepare ?? prepare)(bytes);
+            if (prepared.type !== 'images' || !prepared.images)
+              throw new Fault('photo-content-mismatch');
+            cp.images.push(...prepared.images);
+          }
           cp.sources.push(await this.talk.archive(bytes, message.id));
-          cp.images.push(...prepared.images);
           cp.photoIndex++;
           this.store.checkpoint(job.id, cp);
           this.store.db
@@ -408,6 +417,10 @@ export class Engine {
         }
       }
       if (cp.images.length > 12) throw new Fault('document-page-limit');
+      if (this.options.capture) {
+        await this.capture(job, message, cp, cp.sources);
+        return;
+      }
       cp.prepared = {
         type: 'images',
         mediaType: 'image/jpeg',
@@ -454,7 +467,19 @@ export class Engine {
             .run(job.id);
           return;
         }
+        if (
+          this.options.capture &&
+          /^(image\/|application\/pdf$)/.test(source.mediaType)
+        ) {
+          await this.capture(job, message, cp, [source]);
+          return;
+        }
+        // Structured exports need no model; anything else is captured.
         cp.prepared = await (this.options.prepare ?? prepare)(bytes);
+        if (this.options.capture && cp.prepared.type !== 'facts') {
+          await this.capture(job, message, cp, [source]);
+          return;
+        }
         this.store.checkpoint(job.id, cp);
       } finally {
         bytes.fill(0);
@@ -611,6 +636,61 @@ export class Engine {
       .prepare("UPDATE jobs SET state='ready',attempts=0 WHERE id=?")
       .run(job.id);
   }
+  private async capture(
+    job: Job,
+    message: Message,
+    cp: AttachmentCheckpoint,
+    sources: Source[],
+  ): Promise<void> {
+    const purchaseId = key('source', ...sources.map((s) => s.hash));
+    const p = parsePurchase({
+      ...Object.fromEntries(
+        [
+          'merchant',
+          'date',
+          'currency',
+          'total',
+          'subtotal',
+          'tax',
+          'tip',
+          'shipping',
+          'discount',
+          'reference',
+        ].map((k) => [k, null]),
+      ),
+      payment: 'unknown',
+      items: [],
+      schema: 'purchase.v2',
+      id: purchaseId,
+      revision: 1,
+      state: 'pending',
+      sources,
+      annotations: message.message
+        ? [
+            {
+              speaker: message.speaker,
+              messageId: message.id,
+              at: message.at,
+              text: message.message,
+            },
+          ]
+        : [],
+      provenance: { method: 'capture', model: null, at: message.at },
+      transactions: [],
+      allocations: [],
+    });
+    await this.refresh();
+    if (!this.purchases().some((x) => x.id === p.id))
+      await this.writer.publish(key('publish', p.id), null, p);
+    this.store.queueReply(key('capture', job.id), message.id, CAPTURED);
+    cp.index = cp.grouped ? message.attachments.length : cp.index + 1;
+    for (const k of ['photoIndex', 'grouped', 'images', 'sources'] as const)
+      delete cp[k];
+    this.store.checkpoint(job.id, cp);
+    this.store.db
+      .prepare("UPDATE jobs SET state='ready',attempts=0 WHERE id=?")
+      .run(job.id);
+  }
   private async purchase(job: Job): Promise<void> {
     const input = JSON.parse(job.payload) as {
       purchaseId: string;
@@ -690,6 +770,14 @@ export class Engine {
               a.category!,
               (bankAllocations.get(a.category!) ?? 0) + a.amount,
             );
+      if (
+        this.options.capture &&
+        !preserveCategories &&
+        !p.allocations.length
+      ) {
+        this.store.finish(job.id);
+        return;
+      }
       const categorized = preserveCategories
         ? {
             allocations: [...bankAllocations].map(([category, amount]) => ({
@@ -920,6 +1008,13 @@ export class Engine {
         message.id,
         'Thanks — I’ll check the banks now and send the weekly summary.',
       );
+      cp.done = true;
+      this.store.checkpoint(job.id, cp);
+      this.store.finish(job.id);
+      return;
+    }
+    if (this.options.capture) {
+      this.store.queueReply(key(job.id, 'answer'), message.id, CAPTURE_ONLY);
       cp.done = true;
       this.store.checkpoint(job.id, cp);
       this.store.finish(job.id);

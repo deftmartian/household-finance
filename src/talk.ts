@@ -235,9 +235,10 @@ export class Talk {
       headers: { authorization: this.authorization, ...init.headers },
     });
   }
-  async download(a: Attachment): Promise<Buffer> {
-    attachmentSchema.parse(a);
-    const body = `<?xml version="1.0"?><d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:basicsearch><d:select><d:prop><d:getetag/><oc:fileid/><oc:size/></d:prop></d:select><d:from><d:scope><d:href>/files/${encodeURIComponent(this.config.user)}</d:href><d:depth>infinity</d:depth></d:scope></d:from><d:where><d:eq><d:prop><oc:fileid/></d:prop><d:literal>${a.fileId}</d:literal></d:eq></d:where><d:orderby/></d:basicsearch></d:searchrequest>`;
+  private async locate(
+    fileId: string,
+  ): Promise<{ url: URL; etag: string; size: number }> {
+    const body = `<?xml version="1.0"?><d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:basicsearch><d:select><d:prop><d:getetag/><oc:fileid/><oc:size/></d:prop></d:select><d:from><d:scope><d:href>/files/${encodeURIComponent(this.config.user)}</d:href><d:depth>infinity</d:depth></d:scope></d:from><d:where><d:eq><d:prop><oc:fileid/></d:prop><d:literal>${fileId}</d:literal></d:eq></d:where><d:orderby/></d:basicsearch></d:searchrequest>`;
     const result = await this.dav(`${this.config.url}/remote.php/dav/`, {
       method: 'SEARCH',
       headers: { 'content-type': 'application/xml' },
@@ -255,7 +256,7 @@ export class Talk {
         const propstat = record(p);
         if (!String(propstat.status).includes('200')) return [];
         const prop = record(propstat.prop);
-        return String(prop.fileid) === a.fileId
+        return String(prop.fileid) === fileId
           ? [
               {
                 href: String(response.href),
@@ -269,14 +270,43 @@ export class Talk {
     if (matches.length !== 1) throw new Fault('nextcloud-file-ambiguous');
     const match = matches[0]!;
     const url = new URL(match.href, this.config.url);
-    const prefix = `/remote.php/dav/files/${encodeURIComponent(this.config.user)}/`;
-    if (
-      url.origin !== this.config.url ||
-      !url.pathname.startsWith(prefix) ||
-      match.etag !== a.etag ||
-      match.size !== a.size
-    )
+    if (!this.owned(url)) throw new Fault('nextcloud-metadata-mismatch');
+    return { url, etag: match.etag, size: match.size };
+  }
+  private owned(url: URL): boolean {
+    return (
+      url.origin === this.config.url &&
+      url.pathname.startsWith(
+        `/remote.php/dav/files/${encodeURIComponent(this.config.user)}/`,
+      )
+    );
+  }
+  // An archived original, addressed by its stored link. Callers verify the hash.
+  async original(link: string, limit = MAX_FILE): Promise<Buffer> {
+    const url = new URL(link);
+    if (url.origin !== this.config.url)
+      throw new Fault('source-url-unsupported');
+    const file = /^\/index\.php\/f\/([1-9]\d*)$/.exec(url.pathname);
+    const target = file
+      ? (await this.locate(file[1]!)).url
+      : this.owned(url)
+        ? url
+        : undefined;
+    if (!target) throw new Fault('source-url-unsupported');
+    const response = await this.dav(target.href, {
+      method: 'GET',
+      headers: { 'accept-encoding': 'identity' },
+    });
+    if (response.status !== 200)
+      throw new Fault('nextcloud-download-failed', response.status >= 500);
+    return readBytes(response, limit);
+  }
+  async download(a: Attachment): Promise<Buffer> {
+    attachmentSchema.parse(a);
+    const located = await this.locate(a.fileId);
+    if (located.etag !== a.etag || located.size !== a.size)
       throw new Fault('nextcloud-metadata-mismatch');
+    const url = located.url;
     const response = await this.dav(url.href, {
       method: 'GET',
       headers: { 'if-match': `"${a.etag}"`, 'accept-encoding': 'identity' },

@@ -21,6 +21,10 @@ Start only the replacement application with Actual Server unchanged. Keep the ex
 
 Remove old service definitions and deployment triggers. Delete retired runtime containers/volumes and obsolete signing credentials only after backups are verified and replacement recovery succeeds. Retained offline backups are recovery artifacts, not runtime dependencies. Never mount predecessor stores or conversion tools into the installed application.
 
+## Capture-only operation and review sessions
+
+Set `model.enabled` to false for capture-only operation; the model key file is then not read. Review sessions run `node dist/session.js` inside the application container (see the README for commands) and need no extra credentials or ports. Each run downloads its own Actual budget copy into a temporary directory under `/tmp` and removes it on exit, and opens the SQLite journal with a 30-second busy timeout so it can run beside the worker. Size `/tmp` for the budget copy. The item map lives at `/data/item-map.json` with mode 0600; include it in backups of the data volume.
+
 ## Recovery
 
 The default is to repair the replacement while Actual remains usable manually. Stop the worker before recovery. Preserve its SQLite database, WAL, Actual cache, and uncertain operation journal. A confirmed desired state completes an operation; unchanged expected state permits a bounded retry; any other state needs reconciliation. A failed notification never reruns a financial edit.

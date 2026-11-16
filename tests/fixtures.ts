@@ -1,4 +1,4 @@
-import type { Ledger } from '../src/actual.js';
+import type { Ledger, LedgerRule } from '../src/actual.js';
 import { canonical, parsePurchase, PURCHASE_PREFIX } from '../src/domain.js';
 import type { Purchase, Transaction } from '../src/domain.js';
 import type { BankHealth, BudgetCategory } from '../src/weekly.js';
@@ -107,6 +107,25 @@ export class FakeLedger implements Ledger {
   async bankSync() {
     this.bankSyncs++;
     return structuredClone(this.health);
+  }
+  async banks() {
+    return structuredClone(this.health);
+  }
+  async accountNames() {
+    return new Map([['card', 'Example Card']]);
+  }
+  ruleRows: LedgerRule[] = [];
+  async rules() {
+    return structuredClone(this.ruleRows);
+  }
+  async createRule(importedMerchant: string, category: string) {
+    this.ruleRows.push({
+      conditionsOp: 'and',
+      conditions: [
+        { field: 'imported_payee', op: 'is', value: importedMerchant },
+      ],
+      actions: [{ op: 'set', field: 'category', value: category }],
+    });
   }
   budgetRows: BudgetCategory[] = [];
   async budget() {

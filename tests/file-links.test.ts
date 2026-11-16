@@ -68,3 +68,33 @@ it('requests the original representation to preserve the conditional-download ET
     }),
   ).toEqual(bytes);
 });
+it('fetches an archived original by its stored link, only inside the service files', async () => {
+  const bytes = Buffer.from('synthetic original');
+  const fetcher = vi.fn(async (url: unknown, init: RequestInit) => {
+    if (init.method === 'SEARCH')
+      return new Response(
+        `<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>/remote.php/dav/files/service/Finance/a.pdf</d:href><d:propstat><d:prop><oc:fileid>12345</oc:fileid><d:getetag>"e"</d:getetag><oc:size>1</oc:size></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`,
+        { status: 207 },
+      );
+    expect(String(url)).toBe(
+      'https://cloud.example.test/remote.php/dav/files/service/Finance/a.pdf',
+    );
+    return new Response(bytes, { status: 200 });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const talk = new Talk(config);
+  expect(
+    await talk.original('https://cloud.example.test/index.php/f/12345'),
+  ).toEqual(bytes);
+  await expect(
+    talk.original('https://other.example.test/index.php/f/12345'),
+  ).rejects.toThrow('source-url-unsupported');
+  await expect(
+    talk.original(
+      'https://cloud.example.test/remote.php/dav/files/someone/a.pdf',
+    ),
+  ).rejects.toThrow('source-url-unsupported');
+  await expect(
+    talk.original('https://cloud.example.test/index.php/f/12345', 4),
+  ).rejects.toThrow('response-size');
+});
