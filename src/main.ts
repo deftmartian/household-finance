@@ -38,13 +38,17 @@ export async function main(): Promise<void> {
     secret: secret(c.talk.secretFile),
     password: secret(c.talk.passwordFile),
   });
-  const model = new Model({ ...c.model, key: secret(c.model.keyFile) }, store);
+  const model = new Model(
+    { ...c.model, key: c.model.enabled ? secret(c.model.keyFile) : '' },
+    store,
+  );
   const engine = new Engine(store, ledger, model, talk, {
     speakers: new Set(c.talk.users),
     writeAccounts: new Set(c.actual.writeAccounts),
     currency: c.currency,
     automaticCategories: new Set(c.actual.automaticCategories),
     timezone: c.timezone,
+    capture: !c.model.enabled,
   });
   await engine.refresh();
   let stopping = false,

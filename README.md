@@ -12,7 +12,25 @@ Complete cash and zero-total purchases remain as recorded evidence without waiti
 
 Household context lives in the application's SQLite database, with attribution, explicit/inferred status, scope, revision checks, and forgetting. SQLite full-text search and bounded history retrieval are sufficient for the initial deployment; there is no QMD dependency. Fresh financial facts come from Actual, not memory.
 
-## Development
+## Capture-only mode and review sessions
+
+With `model.enabled` false the bot makes no model call. It downloads, sniffs, and archives each receipt photo or PDF, records a pending purchase with no extracted facts (provenance method `capture`), and replies once that it was saved. A grouped multi-photo message becomes one purchase. Structured exports that need no model are still read deterministically. Questions receive a fixed reply; the weekly summary is unchanged. Purchases without a total and date are not queued for matching, and no categorization jobs are queued.
+
+Judgment work happens in periodic review sessions run by an operator or an AI agent through a deterministic CLI that holds no model key:
+
+```
+docker exec <container> node dist/session.js <command>
+```
+
+Every command prints JSON on stdout; failures print `{"error": code}` and exit non-zero. It uses its own temporary Actual cache, so it does not share state with the running bot.
+
+- `status`: bank connections (no sync) and counts of uncategorized transactions and purchases by state.
+- `sync`: run the bank sync and report per-bank status.
+- `pending`: categories, uncategorized write-account transactions, open purchases, and item-map suggestions.
+- `receipt <purchaseId> <sourceIndex> <outPath>`: download an archived original, verify its SHA-256, and write it with mode 0600.
+- `match`: deterministic match proposals (`unique`, `by-merchant`, `combination`, `ambiguous`, `none`, `stale`); never writes.
+- `apply <plan.json> [--commit]`: validate a plan against live state (dry run), or apply it in order and stop at the first failure. Operations: `facts`, `resolve`, `categorize`, `discard`, `rule` (optionally `applyExisting`), `item`. Writes go through the operation journal, so re-running a plan is safe.
+- `items`: print the item map, a private `item-map.json` in the data volume that maps a normalized merchant and item key to a category.
 
 Use Node 24 and pnpm. Run `pnpm install --frozen-lockfile`, then `pnpm verify`. Build the image with `docker build --target finance-runtime -t household-finance:local .` and run `bash scripts/verify-container.sh household-finance:local`.
 
