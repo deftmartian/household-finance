@@ -552,7 +552,7 @@ export async function receipt(
   s: Session,
   purchaseId: string,
   index: number,
-  out: string,
+  out?: string,
 ) {
   const p = (await s.ledger.purchases()).find((x) => x.id === purchaseId);
   const source = p?.sources[index];
@@ -560,7 +560,14 @@ export async function receipt(
   const bytes = await s.original(source.url);
   if (createHash('sha256').update(bytes).digest('hex') !== source.hash)
     throw new Fault('receipt-hash-mismatch');
-  writeFileSync(out, bytes, { mode: 0o600 });
-  chmodSync(out, 0o600);
-  return { path: out, mediaType: source.mediaType, bytes: bytes.length };
+  const meta = {
+    path: out ?? '-',
+    mediaType: source.mediaType,
+    bytes: bytes.length,
+  };
+  if (out) {
+    writeFileSync(out, bytes, { mode: 0o600 });
+    chmodSync(out, 0o600);
+  }
+  return { meta, data: bytes };
 }

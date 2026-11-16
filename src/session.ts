@@ -43,7 +43,10 @@ async function run(args: string[]): Promise<void> {
       ? (() => {
           if (positional.length !== 1) throw new Fault('usage');
           return review.planSchema.parse(
-            JSON.parse(readFileSync(positional[0]!, 'utf8')),
+            // '-' reads the plan from stdin, so nothing is staged in the container.
+            JSON.parse(
+              readFileSync(positional[0] === '-' ? 0 : positional[0]!, 'utf8'),
+            ),
           );
         })()
       : undefined;
@@ -100,14 +103,20 @@ async function run(args: string[]): Promise<void> {
     else if (command === 'receipt') {
       const index = Number(positional[1]);
       if (!Number.isInteger(index) || index < 0) throw new Fault('usage');
-      out(
-        await review.receipt(
-          session,
-          positional[0]!,
-          index,
-          resolve(positional[2]!),
-        ),
+      // '-' streams the verified original to stdout and its metadata to stderr.
+      const toStdout = positional[2] === '-';
+      const result = await review.receipt(
+        session,
+        positional[0]!,
+        index,
+        toStdout ? undefined : resolve(positional[2]!),
       );
+      if (toStdout) {
+        await new Promise<void>((done, fail) =>
+          process.stdout.write(result.data, (e) => (e ? fail(e) : done())),
+        );
+        process.stderr.write(JSON.stringify(result.meta) + '\n');
+      } else out(result.meta);
     } else {
       const result = await review.apply(
         session,

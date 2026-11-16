@@ -455,11 +455,14 @@ it('fetches a receipt only when its hash matches, with private permissions', asy
   p.sources[0]!.hash = createHash('sha256').update(bytes).digest('hex');
   f.ledger.seed(p);
   const out = join(f.dir, 'r.jpg');
-  expect(await receipt(f.s, 'purchase-one', 0, out)).toEqual({
+  expect((await receipt(f.s, 'purchase-one', 0, out)).meta).toEqual({
     path: out,
     mediaType: 'image/jpeg',
     bytes: bytes.length,
   });
+  const streamed = await receipt(f.s, 'purchase-one', 0);
+  expect(streamed.meta.path).toBe('-');
+  expect(streamed.data).toEqual(bytes);
   expect(statSync(out).mode & 0o777).toBe(0o600);
   expect(readFileSync(out)).toEqual(bytes);
   f.original.mockResolvedValue(Buffer.from('tampered'));
