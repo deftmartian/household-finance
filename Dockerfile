@@ -2,8 +2,9 @@ FROM node:26-bookworm-slim AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends g++ make python3 && rm -rf /var/lib/apt/lists/*
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-# pnpm from npm at the version package.json pins, not through Corepack.
-RUN npm install -g "$(node -p 'require("./package.json").packageManager')"
+# pnpm from npm at the version package.json pins, not through Corepack. npm 11
+# warns that pnpm's install scripts are not covered by allowScripts; allow exactly those.
+RUN npm install -g --allow-scripts=pnpm "$(node -p 'require("./package.json").packageManager')"
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
